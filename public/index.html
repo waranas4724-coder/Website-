@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>PromptForge — AI Prompt Library</title>
+<meta name="description" content="Discover useful AI prompts for image, video and creative workflows.">
+<link rel="stylesheet" href="/styles.css">
+<link rel="alternate" type="application/rss+xml" title="PromptForge RSS" href="/rss.xml">
+</head>
+<body>
+<header class="top">
+  <div class="wrap nav">
+    <button class="brand" id="brand" aria-label="PromptForge home">
+      <span class="logo">P</span><span>PromptForge</span>
+    </button>
+    <nav>
+      <a href="#prompts">Prompts</a><a href="#categories">Categories</a><a href="#about">About</a><a href="/rss.xml">RSS</a>
+    </nav>
+  </div>
+</header>
+
+<main>
+<section class="hero">
+  <div class="wrap">
+    <div class="eyebrow">AI PROMPT LIBRARY · UPDATED AUTOMATICALLY</div>
+    <h1>Find the prompt<br><em>that makes it happen.</em></h1>
+    <p>Explore practical prompts for image, video and creative AI workflows.</p>
+    <div class="search">
+      <span>⌕</span><input id="search" placeholder="Search prompts, models, styles..." autocomplete="off">
+    </div>
+    <div class="pills">
+      <button class="pill active" data-media="all">All</button>
+      <button class="pill" data-media="Image">Photo</button>
+      <button class="pill" data-media="Video">Video</button>
+      <button class="pill" data-media="Writing">Writing</button>
+    </div>
+  </div>
+</section>
+
+<div class="wrap ad" data-slot="banner_top"></div>
+<section class="wrap section" id="prompts">
+  <div class="section-head"><div><span class="kicker">LATEST</span><h2>Fresh prompts</h2></div><span id="count" class="muted"></span></div>
+  <div id="grid" class="grid"></div>
+</section>
+
+<section class="wrap section" id="categories">
+  <div class="section-head"><div><span class="kicker">EXPLORE</span><h2>Browse by category</h2></div></div>
+  <div class="categories">
+    <button data-cat="Photography">Photography</button><button data-cat="Cinematic">Cinematic</button>
+    <button data-cat="Social Media">Social Media</button><button data-cat="Product">Product</button>
+    <button data-cat="Character">Character</button><button data-cat="Anime">Anime</button>
+  </div>
+</section>
+
+<section class="wrap about section" id="about">
+  <span class="kicker">PROMPTFORGE</span><h2>Built for creators.</h2>
+  <p>New prompt records can be published automatically through an authorized API/feed, with duplicate protection and scheduled collection.</p>
+</section>
+<div class="wrap ad" data-slot="native_banner"></div>
+<div class="wrap ad" data-slot="banner_bottom"></div>
+</main>
+
+<div id="modal" class="modal hidden"><div class="modal-box">
+  <button id="close" class="close">×</button><div id="modalBody"></div>
+</div></div>
+<footer><div class="wrap">© 2026 PromptForge · <a href="/rss/image.xml">Photo RSS</a> · <a href="/rss/video.xml">Video RSS</a> · <a href="/api/v1/prompts">API</a></div></footer>
+<script src="/app.js"></script>
+</body>
+</html>
