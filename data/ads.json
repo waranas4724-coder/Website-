@@ -1,1 +1,12 @@
-{}
+{
+  "copy_gate": {
+    "enabled": false,
+    "seconds": 10,
+    "url": "",
+    "openOnCopy": true
+  },
+  "smart_link": {
+    "enabled": false,
+    "url": ""
+  }
+}
