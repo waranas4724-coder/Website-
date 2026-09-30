@@ -682,4 +682,778 @@ app.get(
         ),
 
       directLink:
-        get
+        getSetting(
+          'directLink',
+          ''
+        )
+    });
+  }
+);
+
+app.post(
+  '/api/admin/settings',
+  adminOnly,
+  (req, res) => {
+
+    const seconds =
+      Math.max(
+        0,
+        Math.min(
+          120,
+          Number(
+            req.body.copyGateSeconds ||
+            10
+          )
+        )
+      );
+
+    setSettings({
+      autoPostEnabled:
+        !!req.body.autoPostEnabled,
+
+      cron:
+        req.body.cron ||
+        '0 */6 * * *',
+
+      copyGateSeconds:
+        seconds,
+
+      directLink:
+        safeUrl(
+          req.body.directLink ||
+          ''
+        )
+    });
+
+    scheduleAutomaticPosting();
+
+    res.json({
+      ok: true
+    });
+  }
+);
+
+/* =========================================
+   ADMIN ADS
+========================================= */
+
+app.get(
+  '/api/admin/ads',
+  adminOnly,
+  (req, res) => {
+
+    res.json(
+      db.getAds()
+    );
+  }
+);
+
+app.post(
+  '/api/admin/ads',
+  adminOnly,
+  (req, res) => {
+
+    db.saveAds(
+      req.body || {}
+    );
+
+    res.json({
+      ok: true
+    });
+  }
+);
+
+/* =========================================
+   BUILT-IN API PROVIDERS
+========================================= */
+
+function providerKey(name) {
+
+  return String(name || '')
+    .toLowerCase()
+    .replace(/[\s_-]+/g, '');
+}
+
+/* ---------- Trending ---------- */
+
+async function googleNewsWorldwide() {
+
+  const url =
+    'https://news.google.com/rss?hl=en-US&gl=US&ceid=US:en';
+
+  const response =
+    await fetch(
+      url,
+      {
+        signal:
+          AbortSignal.timeout(15000)
+      }
+    );
+
+  if (!response.ok) {
+    throw new Error(
+      'Google News unavailable'
+    );
+  }
+
+  const xml =
+    await response.text();
+
+  const titles = [];
+
+  const matches =
+    xml.matchAll(
+      /<title>(.*?)<\/title>/g
+    );
+
+  for (const match of matches) {
+
+    const title =
+      match[1]
+        .replace(
+          /<!\[CDATA\[(.*?)\]\]>/g,
+          '$1'
+        )
+        .replace(
+          /&amp;/g,
+          '&'
+        )
+        .trim();
+
+    if (
+      title &&
+      title !== 'Google News'
+    ) {
+      titles.push(title);
+    }
+  }
+
+  return titles.slice(0, 20);
+}
+
+/* ---------- Photos ---------- */
+
+async function pexelsSearch(
+  apiKey,
+  topic
+) {
+
+  const url =
+    'https://api.pexels.com/v1/search?' +
+    new URLSearchParams({
+      query: topic,
+      per_page: '1'
+    });
+
+  const response =
+    await fetch(
+      url,
+      {
+        headers: {
+          Authorization: apiKey
+        },
+        signal:
+          AbortSignal.timeout(15000)
+      }
+    );
+
+  if (!response.ok) {
+    throw new Error(
+      `Pexels HTTP ${response.status}`
+    );
+  }
+
+  const data =
+    await response.json();
+
+  return (
+    data.photos?.[0]?.src?.large2x ||
+    data.photos?.[0]?.src?.large ||
+    ''
+  );
+}
+
+async function unsplashSearch(
+  apiKey,
+  topic
+) {
+
+  const url =
+    'https://api.unsplash.com/search/photos?' +
+    new URLSearchParams({
+      query: topic,
+      per_page: '1'
+    });
+
+  const response =
+    await fetch(
+      url,
+      {
+        headers: {
+          Authorization:
+            `Client-ID ${apiKey}`
+        },
+        signal:
+          AbortSignal.timeout(15000)
+      }
+    );
+
+  if (!response.ok) {
+    throw new Error(
+      `Unsplash HTTP ${response.status}`
+    );
+  }
+
+  const data =
+    await response.json();
+
+  return (
+    data.results?.[0]?.urls?.regular ||
+    ''
+  );
+}
+
+/* ---------- Prompt AI ---------- */
+
+async function geminiPrompt(
+  apiKey,
+  topic
+) {
+
+  const url =
+    'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=' +
+    encodeURIComponent(apiKey);
+
+  const response =
+    await fetch(
+      url,
+      {
+        method: 'POST',
+
+        headers: {
+          'Content-Type':
+            'application/json'
+        },
+
+        body: JSON.stringify({
+          contents: [{
+            parts: [{
+              text:
+                `Create one high quality AI image prompt about "${topic}". Return only the prompt text. Include subject, composition, lighting, camera, atmosphere, colors and detail.`
+            }]
+          }]
+        }),
+
+        signal:
+          AbortSignal.timeout(20000)
+      }
+    );
+
+  if (!response.ok) {
+    throw new Error(
+      `Gemini HTTP ${response.status}`
+    );
+  }
+
+  const data =
+    await response.json();
+
+  return (
+    data
+      .candidates?.[0]
+      ?.content?.parts?.[0]
+      ?.text
+      ?.trim() ||
+    ''
+  );
+}
+
+async function groqPrompt(
+  apiKey,
+  topic
+) {
+
+  const response =
+    await fetch(
+      'https://api.groq.com/openai/v1/chat/completions',
+      {
+        method: 'POST',
+
+        headers: {
+          Authorization:
+            `Bearer ${apiKey}`,
+
+          'Content-Type':
+            'application/json'
+        },
+
+        body: JSON.stringify({
+          model:
+            'llama-3.1-8b-instant',
+
+          messages: [{
+            role: 'user',
+
+            content:
+              `Create one detailed AI image prompt about "${topic}". Return only the prompt.`
+          }],
+
+          temperature: 0.8
+        }),
+
+        signal:
+          AbortSignal.timeout(20000)
+      }
+    );
+
+  if (!response.ok) {
+    throw new Error(
+      `Groq HTTP ${response.status}`
+    );
+  }
+
+  const data =
+    await response.json();
+
+  return (
+    data.choices?.[0]
+      ?.message?.content
+      ?.trim() ||
+    ''
+  );
+}
+
+/* =========================================
+   TRENDING PROVIDER FALLBACK
+========================================= */
+
+async function getTrendingTopics() {
+
+  const providers =
+    db.getApiProviders()
+      .filter(
+        p =>
+          p.category ===
+            'trending_search' &&
+          p.enabled !== false
+      );
+
+  /*
+    If no trending API is configured,
+    use Google News RSS automatically.
+  */
+
+  try {
+
+    const topics =
+      await googleNewsWorldwide();
+
+    if (topics.length) {
+      return topics;
+    }
+
+  } catch (error) {
+
+    console.log(
+      'Trending fallback:',
+      error.message
+    );
+  }
+
+  return [];
+}
+
+/* =========================================
+   PROMPT GENERATOR FALLBACK
+========================================= */
+
+async function generatePrompt(topic) {
+
+  const providers =
+    db.getApiProviders()
+      .filter(
+        p =>
+          p.category ===
+            'prompt_generate' &&
+          p.enabled !== false
+      );
+
+  for (const provider of providers) {
+
+    try {
+
+      const name =
+        providerKey(
+          provider.providerName
+        );
+
+      if (
+        name === 'gemini' ||
+        name === 'googlegemini'
+      ) {
+
+        const result =
+          await geminiPrompt(
+            provider.apiKey,
+            topic
+          );
+
+        if (result) {
+          return result;
+        }
+      }
+
+      if (name === 'groq') {
+
+        const result =
+          await groqPrompt(
+            provider.apiKey,
+            topic
+          );
+
+        if (result) {
+          return result;
+        }
+      }
+
+    } catch (error) {
+
+      console.log(
+        `${provider.providerName} failed:`,
+        error.message
+      );
+    }
+  }
+
+  /*
+    No AI API? Generate a local prompt.
+    This means automatic posting can still
+    continue without an AI API.
+  */
+
+  return (
+    `Create a premium, highly detailed AI image ` +
+    `based on "${topic}". Include a strong subject, ` +
+    `professional composition, cinematic lighting, ` +
+    `realistic textures, atmospheric depth, ` +
+    `beautiful color grading, sharp details, ` +
+    `professional photography and high quality.`
+  );
+}
+
+/* =========================================
+   PHOTO GENERATOR / SEARCH
+========================================= */
+
+async function generatePhoto(topic) {
+
+  const providers =
+    db.getApiProviders()
+      .filter(
+        p =>
+          p.category ===
+            'photo_generate' &&
+          p.enabled !== false
+      );
+
+  for (const provider of providers) {
+
+    try {
+
+      const name =
+        providerKey(
+          provider.providerName
+        );
+
+      if (
+        name === 'pexels'
+      ) {
+
+        const result =
+          await pexelsSearch(
+            provider.apiKey,
+            topic
+          );
+
+        if (result) {
+          return result;
+        }
+      }
+
+      if (
+        name === 'unsplash'
+      ) {
+
+        const result =
+          await unsplashSearch(
+            provider.apiKey,
+            topic
+          );
+
+        if (result) {
+          return result;
+        }
+      }
+
+    } catch (error) {
+
+      console.log(
+        `${provider.providerName} failed:`,
+        error.message
+      );
+    }
+  }
+
+  return '';
+}
+
+/* =========================================
+   AUTOMATIC POSTING
+========================================= */
+
+let running = false;
+
+async function automaticPost() {
+
+  if (running) {
+    return {
+      added: 0,
+      reason:
+        'Already running'
+    };
+  }
+
+  if (
+    !getSetting(
+      'autoPostEnabled',
+      true
+    )
+  ) {
+    return {
+      added: 0,
+      reason:
+        'Automatic posting disabled'
+    };
+  }
+
+  running = true;
+
+  let added = 0;
+
+  try {
+
+    const topics =
+      await getTrendingTopics();
+
+    const existing =
+      db.getPrompts();
+
+    const existingTitles =
+      new Set(
+        existing.map(
+          p =>
+            String(
+              p.title
+            ).toLowerCase()
+        )
+      );
+
+    /*
+      Up to 15 posts per run.
+    */
+
+    for (
+      const topic of
+      topics.slice(0, 15)
+    ) {
+
+      if (
+        existingTitles.has(
+          String(topic)
+            .toLowerCase()
+        )
+      ) {
+        continue;
+      }
+
+      const prompt =
+        await generatePrompt(
+          topic
+        );
+
+      const imageUrl =
+        await generatePhoto(
+          topic
+        );
+
+      const item =
+        createPrompt(
+          {
+            title: topic,
+            prompt,
+            imageUrl,
+            media: 'Image',
+            model: 'Auto',
+            category: 'Trending',
+            source:
+              'Automatic',
+            license:
+              'Provider terms'
+          },
+          true
+        );
+
+      db.addPrompt(item);
+
+      existingTitles.add(
+        String(topic)
+          .toLowerCase()
+      );
+
+      added++;
+    }
+
+    return {
+      added,
+      topics:
+        topics.length
+    };
+
+  } finally {
+
+    running = false;
+  }
+}
+
+/* =========================================
+   ADMIN RUN NOW
+========================================= */
+
+app.post(
+  '/api/admin/collect',
+  adminOnly,
+  async (req, res) => {
+
+    try {
+
+      const result =
+        await automaticPost();
+
+      res.json(result);
+
+    } catch (error) {
+
+      console.error(error);
+
+      res
+        .status(500)
+        .json({
+          error:
+            'Automatic posting failed'
+        });
+    }
+  }
+);
+
+/* =========================================
+   CRON
+========================================= */
+
+let cronJob = null;
+
+function scheduleAutomaticPosting() {
+
+  if (cronJob) {
+    cronJob.stop();
+    cronJob = null;
+  }
+
+  const expression =
+    getSetting(
+      'cron',
+      '0 */6 * * *'
+    );
+
+  if (
+    cron.validate(
+      expression
+    )
+  ) {
+
+    cronJob =
+      cron.schedule(
+        expression,
+        () => {
+
+          automaticPost()
+            .then(result =>
+              console.log(
+                'Automatic posting:',
+                result
+              )
+            )
+            .catch(error =>
+              console.error(
+                'Automatic posting error:',
+                error
+              )
+            );
+        }
+      );
+  }
+}
+
+/* =========================================
+   HEALTH
+========================================= */
+
+app.get(
+  '/health',
+  (req, res) => {
+
+    res.json({
+      ok: true,
+      service:
+        'PromptForge',
+      automaticPosting:
+        getSetting(
+          'autoPostEnabled',
+          true
+        )
+    });
+  }
+);
+
+/* =========================================
+   SPA FALLBACK
+========================================= */
+
+app.get(
+  '*splat',
+  (req, res) => {
+
+    res.sendFile(
+      path.join(
+        __dirname,
+        'public',
+        'index.html'
+      )
+    );
+  }
+);
+
+/* =========================================
+   START
+========================================= */
+
+scheduleAutomaticPosting();
+
+app.listen(
+  PORT,
+  () => {
+
+    console.log(
+      `PromptForge running on port ${PORT}`
+    );
+  }
+);
