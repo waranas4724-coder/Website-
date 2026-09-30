@@ -23,11 +23,17 @@ async function load(){
 }
 async function copyText(t){try{await navigator.clipboard.writeText(t)}catch{const a=document.createElement("textarea");a.value=t;document.body.appendChild(a);a.select();document.execCommand("copy");a.remove()}}
 async function openPrompt(slug,push=true){
-  if(push&&ADS.smart_link&&!sessionStorage.getItem("sl")){sessionStorage.setItem("sl","1");window.open(ADS.smart_link,"_blank","noopener")}
   const r=await fetch("/api/prompts/"+encodeURIComponent(slug));if(!r.ok)return;const p=await r.json();
   $("modalBody").innerHTML=`<div class="meta">${esc(p.media)} · ${esc(p.model)} · ${esc(p.category)}</div><h2>${esc(p.title)}</h2>${p.imageUrl?`<img src="${esc(p.imageUrl)}" alt="" style="width:100%;border-radius:14px;margin-bottom:16px">`:""}<div class="fullprompt">${esc(p.prompt)}</div><button class="copy" id="copy">Copy prompt</button><div class="lic">License: ${esc(p.license||"CC0-1.0")} · Source: ${esc(p.source)}</div>${frame("modal_banner")}`;
   modal.classList.remove("hidden");if(push)history.pushState(null,"","/p/"+p.slug);
-  $("copy").onclick=async()=>{await copyText(p.prompt);$("copy").textContent="Copied ✓"};
+  $("copy").onclick=async()=>{
+    const settings=await fetch("/api/admin/settings").then(r=>r.json()).catch(()=>({copyGateSeconds:10,directLink:""}));
+    const sec=Math.max(0,+settings.copyGateSeconds||10),url=settings.directLink||ADS.smart_link||"";
+    if(url){ window.open(url,"_blank","noopener"); }
+    if(sec>0){ let left=sec,btn=$("copy");btn.disabled=true;btn.textContent=`Wait ${left}s…`;const iv=setInterval(()=>{left--;btn.textContent=left?`Wait ${left}s…`:"Copy prompt";if(!left){clearInterval(iv);btn.disabled=false}},1000); }
+    else {await copyText(p.prompt);$("copy").textContent="Copied ✓";}
+    $("copy").onclick=async()=>{await copyText(p.prompt);$("copy").textContent="Copied ✓"};
+  };
 }
 function closeModal(){modal.classList.add("hidden");if(location.pathname.startsWith("/p/"))history.replaceState(null,"","/")}
 document.querySelectorAll(".pill").forEach(b=>b.onclick=()=>{document.querySelectorAll(".pill").forEach(x=>x.classList.remove("active"));b.classList.add("active");media=b.dataset.media;load()});
