@@ -1,0 +1,11 @@
+const Database=require('better-sqlite3');
+const path=require('path'),fs=require('fs');
+const dir=process.env.DATA_DIR||path.join(__dirname,'data'); fs.mkdirSync(dir,{recursive:true});
+const db=new Database(path.join(dir,'promptforge.db'));
+db.pragma('journal_mode = WAL');
+db.exec(`CREATE TABLE IF NOT EXISTS prompts(id TEXT PRIMARY KEY,slug TEXT UNIQUE,title TEXT,prompt TEXT,media TEXT,model TEXT,category TEXT,imageUrl TEXT,source TEXT,license TEXT,sourceUrl TEXT,publishedAt TEXT,auto INTEGER DEFAULT 0);
+CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY,value TEXT);
+CREATE TABLE IF NOT EXISTS ads(slot TEXT PRIMARY KEY,enabled INTEGER DEFAULT 0,code TEXT DEFAULT '',height INTEGER DEFAULT 0,url TEXT DEFAULT '');
+CREATE TABLE IF NOT EXISTS api_providers(id INTEGER PRIMARY KEY AUTOINCREMENT,name TEXT NOT NULL,category TEXT NOT NULL,enabled INTEGER DEFAULT 1,priority INTEGER DEFAULT 100,base_url TEXT DEFAULT '',api_key TEXT DEFAULT '',method TEXT DEFAULT 'GET',headers TEXT DEFAULT '{}',body_template TEXT DEFAULT '',response_paths TEXT DEFAULT '{}',model TEXT DEFAULT '',notes TEXT DEFAULT '',createdAt TEXT DEFAULT CURRENT_TIMESTAMP);
+CREATE TABLE IF NOT EXISTS trends_seen(topic TEXT PRIMARY KEY,seenAt TEXT);`);
+module.exports=db;
