@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "private": true,
   "engines": {
-    "node": "26.10.0"
+    "node": "20.x"
   },
   "description": "Prompt library with protected admin panel and automatic publishing.",
   "main": "server.js",
@@ -15,7 +15,6 @@
     "dotenv": "^16.4.5",
     "express": "^5.1.0",
     "express-session": "^1.18.2",
-    "node-cron": "^4.2.1",
-    "better-sqlite3": "12.10.0"
+    "node-cron": "^4.2.1"
   }
 }
