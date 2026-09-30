@@ -1,1 +1,8 @@
-{"autoPostEnabled":true,"cron":"*/30 * * * *"}
+{
+  "autoPostEnabled": true,
+  "trendEnabled": true,
+  "trendCountries": ["US", "GB", "AE", "IN", "JP", "DE", "FR", "BR"],
+  "copyGateEnabled": true,
+  "copyGateSeconds": 10,
+  "cron": "*/30 * * * *"
+}
