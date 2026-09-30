@@ -1,49 +1,685 @@
 require('dotenv').config();
-const express=require('express'),session=require('express-session'),cron=require('node-cron'),crypto=require('crypto'),path=require('path');
-const db=require('./db');
-const app=express(),PORT=process.env.PORT||3000;
-app.set('trust proxy',1);app.disable('x-powered-by');app.use(express.json({limit:'2mb'}));app.use(express.urlencoded({extended:true}));app.use(express.static(path.join(__dirname,'public')));
-app.use(session({secret:process.env.SESSION_SECRET||crypto.randomBytes(32).toString('hex'),resave:false,saveUninitialized:false,cookie:{httpOnly:true,sameSite:'lax',secure:'auto',maxAge:8*36e5}}));
-const getSetting=(k,d=null)=>{const r=db.prepare('SELECT value FROM settings WHERE key=?').get(k);if(!r)return d;try{return JSON.parse(r.value)}catch{return r.value}};
-const setSetting=(k,v)=>db.prepare('INSERT INTO settings(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value').run(k,JSON.stringify(v));
-const slugify=s=>String(s).toLowerCase().trim().replace(/[^a-z0-9]+/g,'-').replace(/^-|-$/g,'').slice(0,90);
-const httpUrl=u=>/^https?:\/\//i.test(u||'')?u:'';
-const mediaOf=m=>/vid|film|clip|motion/i.test(m)?'Video':/writ|text/i.test(m)?'Writing':'Image';
-function mk(x,auto=false){let base=slugify(x.title)||'prompt',slug=base,n=2;while(db.prepare('SELECT 1 FROM prompts WHERE slug=?').get(slug))slug=`${base}-${n++}`;const id=Date.now().toString(36)+crypto.randomBytes(3).toString('hex');return {id,slug,title:String(x.title).trim().slice(0,140),prompt:String(x.prompt).trim().slice(0,8000),media:mediaOf(x.media),model:x.model||'Any',category:x.category||'General',imageUrl:httpUrl(x.imageUrl),source:x.source||'Original',license:x.license||'Unknown',sourceUrl:httpUrl(x.sourceUrl),publishedAt:x.publishedAt||new Date().toISOString(),auto:auto?1:0};}
-const insertPrompt=p=>db.prepare(`INSERT INTO prompts(id,slug,title,prompt,media,model,category,imageUrl,source,license,sourceUrl,publishedAt,auto) VALUES(@id,@slug,@title,@prompt,@media,@model,@category,@imageUrl,@source,@license,@sourceUrl,@publishedAt,@auto)`).run(p);
-function query(q={}){let sql='SELECT * FROM prompts WHERE 1=1',args={};if(q.q){sql+=' AND lower(title||" "||prompt||" "||model||" "||category) LIKE @q';args.q='%'+String(q.q).toLowerCase()+'%'}if(q.media&&q.media!=='all'){sql+=' AND media=@media';args.media=mediaOf(q.media)}if(q.category&&q.category!=='all'){sql+=' AND lower(category)=@category';args.category=String(q.category).toLowerCase()}sql+=' ORDER BY datetime(publishedAt) DESC';return db.prepare(sql).all(args);}
-app.use('/api/v1',(req,res,next)=>{res.set('Access-Control-Allow-Origin','*');next()});
-app.get('/api/v1/prompts',(req,res)=>{const all=query(req.query),limit=Math.min(100,+req.query.limit||20),page=Math.max(1,+req.query.page||1);res.json({data:all.slice((page-1)*limit,page*limit),meta:{total:all.length,page,limit,pages:Math.ceil(all.length/limit)}})});
-app.get('/api/v1/prompts/:slug',(req,res)=>{const p=db.prepare('SELECT * FROM prompts WHERE slug=?').get(req.params.slug);p?res.json(p):res.status(404).json({error:'Not found'})});
-app.get('/api/v1/categories',(req,res)=>res.json(Object.fromEntries(db.prepare('SELECT category,COUNT(*) c FROM prompts GROUP BY category').all().map(x=>[x.category,x.c]))));
-app.get('/api/prompts',(req,res)=>res.json(query(req.query)));app.get('/api/prompts/:slug',(req,res)=>{const p=db.prepare('SELECT * FROM prompts WHERE slug=?').get(req.params.slug);p?res.json(p):res.status(404).json({error:'Not found'})});
-const admin=(req,res,next)=>req.session?.admin?next():res.status(401).json({error:'Unauthorized'});
-const eq=(a,b)=>{const h=v=>crypto.createHash('sha256').update(String(v)).digest();return crypto.timingSafeEqual(h(a),h(b))};const fails=new Map();
-app.post('/api/login',(req,res)=>{const pw=process.env.ADMIN_PASSWORD;if(!pw)return res.status(503).json({error:'Set ADMIN_PASSWORD'});const f=fails.get(req.ip)||{n:0,t:0};if(f.n>=5&&Date.now()-f.t<9e5)return res.status(429).json({error:'Too many attempts'});if(eq(req.body?.username,process.env.ADMIN_USERNAME||'admin')&&eq(req.body?.password,pw)){fails.delete(req.ip);req.session.admin=true;return res.json({ok:true})}fails.set(req.ip,{n:f.n+1,t:Date.now()});res.status(401).json({error:'Invalid credentials'})});
-app.post('/api/logout',(req,res)=>req.session.destroy(()=>res.json({ok:true})));app.get('/api/admin/me',(req,res)=>res.json({authenticated:!!req.session?.admin}));
-app.get('/api/admin/prompts',admin,(req,res)=>res.json(query({})));
-app.post('/api/admin/prompts',admin,(req,res)=>{if(!req.body?.title||!req.body?.prompt)return res.status(400).json({error:'Title and prompt are required'});const p=mk(req.body);insertPrompt(p);res.json(p)});
-app.delete('/api/admin/prompts/:id',admin,(req,res)=>{db.prepare('DELETE FROM prompts WHERE id=?').run(req.params.id);res.json({ok:true})});
-// Unlimited API provider registry: prompt_generate, photo_generate, trending_search.
-const cats=['prompt_generate','photo_generate','trending_search'];
-app.get('/api/admin/providers',admin,(req,res)=>res.json(db.prepare('SELECT * FROM api_providers ORDER BY category,priority,id').all().map(p=>({...p,api_key:p.api_key?'••••••••':'',headers:JSON.parse(p.headers||'{}'),response_paths:JSON.parse(p.response_paths||'{}')}))));
-app.post('/api/admin/providers',admin,(req,res)=>{const b=req.body||{};if(!cats.includes(b.category)||!b.name)return res.status(400).json({error:'Invalid category/name'});const r=db.prepare(`INSERT INTO api_providers(name,category,enabled,priority,base_url,api_key,method,headers,body_template,response_paths,model,notes) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`).run(b.name,b.category,b.enabled!==false?1:0,+b.priority||100,b.base_url||'',b.api_key||'',String(b.method||'GET').toUpperCase(),JSON.stringify(b.headers||{}),b.body_template||'',JSON.stringify(b.response_paths||{}),b.model||'',b.notes||'');res.json({id:r.lastInsertRowid})});
-app.put('/api/admin/providers/:id',admin,(req,res)=>{const b=req.body||{},old=db.prepare('SELECT * FROM api_providers WHERE id=?').get(req.params.id);if(!old)return res.status(404).json({error:'Not found'});db.prepare(`UPDATE api_providers SET name=?,category=?,enabled=?,priority=?,base_url=?,api_key=?,method=?,headers=?,body_template=?,response_paths=?,model=?,notes=? WHERE id=?`).run(b.name||old.name,b.category||old.category,b.enabled!==false?1:0,+b.priority||100,b.base_url??old.base_url,b.api_key||old.api_key,String(b.method||old.method).toUpperCase(),JSON.stringify(b.headers||JSON.parse(old.headers||'{}')),b.body_template??old.body_template,JSON.stringify(b.response_paths||JSON.parse(old.response_paths||'{}')),b.model??old.model,b.notes??old.notes,req.params.id);res.json({ok:true})});
-app.delete('/api/admin/providers/:id',admin,(req,res)=>{db.prepare('DELETE FROM api_providers WHERE id=?').run(req.params.id);res.json({ok:true})});
-app.get('/api/admin/settings',admin,(req,res)=>res.json({autoPostEnabled:getSetting('autoPostEnabled',true),cron:getSetting('cron','*/30 * * * *'),copyGateSeconds:getSetting('copyGateSeconds',10),directLink:getSetting('directLink','')}));
-app.post('/api/admin/settings',admin,(req,res)=>{setSetting('autoPostEnabled',!!req.body.autoPostEnabled);setSetting('cron',req.body.cron||'*/30 * * * *');setSetting('copyGateSeconds',Math.max(0,Math.min(120,+req.body.copyGateSeconds||10)));setSetting('directLink',httpUrl(req.body.directLink||''));res.json({ok:true})});
-const ADS=['head_code','popunder','social_bar','banner_top','banner_middle','banner_bottom','modal_banner','native_banner'];
-app.get('/api/ads',(req,res)=>{const rows=db.prepare('SELECT * FROM ads').all(),o={};rows.forEach(a=>{if(a.enabled&&(a.code||a.url))o[a.slot]=a.slot==='smart_link'?a.url:{code:a.code,height:a.height}});res.json({...o,smart_link:getSetting('directLink','')})});
-app.get('/api/admin/ads',admin,(req,res)=>res.json(db.prepare('SELECT * FROM ads').all()));
-app.post('/api/admin/ads',admin,(req,res)=>{for(const k of ADS){const x=req.body?.[k]||{};db.prepare(`INSERT INTO ads(slot,enabled,code,height,url) VALUES(?,?,?,?,?) ON CONFLICT(slot) DO UPDATE SET enabled=excluded.enabled,code=excluded.code,height=excluded.height,url=excluded.url`).run(k,x.enabled?1:0,String(x.code||'').slice(0,30000),Math.min(1000,Math.max(0,+x.height||0)),httpUrl(x.url||''));}res.json({ok:true})});
-function pathGet(o,p){if(!p)return undefined;return String(p).split('.').reduce((v,k)=>v==null?undefined:v[k],o)}
-function applyTemplate(s,ctx){return String(s||'').replace(/\{\{\s*([^}]+)\s*\}\}/g,(_,k)=>String(pathGet(ctx,k.trim())??''));}
-async function callProvider(p,ctx){const headers={...(JSON.parse(p.headers||'{}'))};if(p.api_key&&!headers.Authorization&&!headers['x-api-key'])headers.Authorization=`Bearer ${p.api_key}`;let url=applyTemplate(p.base_url,ctx);const init={method:p.method,headers,signal:AbortSignal.timeout(20000)};if(p.method!=='GET'&&p.body_template){init.body=applyTemplate(p.body_template,ctx);if(!headers['Content-Type'])headers['Content-Type']='application/json'}const r=await fetch(url,init);if(!r.ok)throw new Error(`${p.name}: HTTP ${r.status}`);const text=await r.text();let data;try{data=JSON.parse(text)}catch{data={text}};return data}
-async function providers(cat){return db.prepare('SELECT * FROM api_providers WHERE category=? AND enabled=1 ORDER BY priority ASC,id ASC').all(cat)}
-async function trendTopics(){const ps=await providers('trending_search');for(const p of ps){try{const d=await callProvider(p,{region:'worldwide',limit:20});const pathx=JSON.parse(p.response_paths||'{}').topics||'topics';let arr=pathGet(d,pathx)||d;if(!Array.isArray(arr))arr=[arr];arr=arr.map(x=>typeof x==='string'?x:(x.title||x.name||x.topic)).filter(Boolean);if(arr.length)return arr}catch(e){console.error(e.message)}}return []}
-async function generatePrompt(topic){for(const p of await providers('prompt_generate')){try{const d=await callProvider(p,{topic,region:'worldwide'});const paths=JSON.parse(p.response_paths||'{}');const out=pathGet(d,paths.prompt||'prompt')||d.prompt||d.text||d.output;if(out)return String(out)}catch(e){console.error(e.message)}}return `Create a professional, highly detailed AI image prompt about: ${topic}. Include subject, composition, lighting, camera, environment, mood, colors, texture and quality.`}
-async function generatePhoto(topic){for(const p of await providers('photo_generate')){try{const d=await callProvider(p,{topic,region:'worldwide'});const paths=JSON.parse(p.response_paths||'{}');const out=pathGet(d,paths.imageUrl||'image_url')||d.image_url||d.url||d.imageUrl;if(out)return httpUrl(out)}catch(e){console.error(e.message)}}return ''}
-async function collect(){if(!getSetting('autoPostEnabled',true))return{added:0,reason:'disabled'};const topics=await trendTopics();let added=0;for(const topic of topics.slice(0,20)){if(db.prepare('SELECT 1 FROM trends_seen WHERE topic=?').get(topic))continue;const prompt=await generatePrompt(topic),imageUrl=await generatePhoto(topic);const p=mk({title:topic,prompt,imageUrl,media:'Image',category:'Trending',model:'Auto',source:'Automatic providers',license:'Provider terms'} ,true);insertPrompt(p);db.prepare('INSERT INTO trends_seen(topic,seenAt) VALUES(?,?)').run(topic,new Date().toISOString());added++;}return{added,topics:topics.length}}
-app.post('/api/admin/collect',admin,async(req,res)=>res.json(await collect()));
-let cronTask;function schedule(){if(cronTask)cronTask.stop();const spec=getSetting('cron','*/30 * * * *');if(cron.validate(spec))cronTask=cron.schedule(spec,collect)}schedule();
-app.get('*splat',(req,res)=>res.sendFile(path.join(__dirname,'public','index.html')));app.listen(PORT,()=>console.log(`PromptForge running on ${PORT}`));
+
+const express = require('express');
+const session = require('express-session');
+const cron = require('node-cron');
+const crypto = require('crypto');
+const path = require('path');
+
+const db = require('./db');
+
+const app = express();
+const PORT = process.env.PORT || 3000;
+
+app.set('trust proxy', 1);
+app.disable('x-powered-by');
+
+app.use(express.json({ limit: '2mb' }));
+app.use(express.urlencoded({ extended: true }));
+
+app.use(express.static(
+  path.join(__dirname, 'public')
+));
+
+app.use(session({
+  secret:
+    process.env.SESSION_SECRET ||
+    crypto.randomBytes(32).toString('hex'),
+
+  resave: false,
+  saveUninitialized: false,
+
+  cookie: {
+    httpOnly: true,
+    sameSite: 'lax',
+    secure: 'auto',
+    maxAge: 8 * 60 * 60 * 1000
+  }
+}));
+
+/* =========================================
+   HELPERS
+========================================= */
+
+function slugify(value) {
+  return String(value || '')
+    .toLowerCase()
+    .trim()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 90);
+}
+
+function safeUrl(value) {
+  return /^https?:\/\//i.test(value || '')
+    ? value
+    : '';
+}
+
+function hash(value) {
+  return crypto
+    .createHash('sha256')
+    .update(String(value || ''))
+    .digest();
+}
+
+function sameSecret(a, b) {
+  try {
+    return crypto.timingSafeEqual(
+      hash(a),
+      hash(b)
+    );
+  } catch {
+    return false;
+  }
+}
+
+function getSetting(name, fallback) {
+  const data = db.getSettings();
+
+  return Object.prototype.hasOwnProperty.call(
+    data,
+    name
+  )
+    ? data[name]
+    : fallback;
+}
+
+function setSettings(values) {
+  return db.saveSettings(values);
+}
+
+function findPrompt(id) {
+  return db
+    .getPrompts()
+    .find(
+      p => String(p.id) === String(id)
+    );
+}
+
+function findPromptBySlug(slug) {
+  return db
+    .getPrompts()
+    .find(
+      p => p.slug === String(slug)
+    );
+}
+
+function uniqueSlug(title) {
+
+  const base =
+    slugify(title) || 'prompt';
+
+  let slug = base;
+  let number = 2;
+
+  const prompts = db.getPrompts();
+
+  while (
+    prompts.some(
+      p => p.slug === slug
+    )
+  ) {
+    slug = `${base}-${number++}`;
+  }
+
+  return slug;
+}
+
+function createPrompt(data, automatic = false) {
+
+  const title =
+    String(
+      data.title || 'Untitled Prompt'
+    )
+      .trim()
+      .slice(0, 140);
+
+  return {
+    id:
+      data.id ||
+      `${Date.now()}-${crypto
+        .randomBytes(4)
+        .toString('hex')}`,
+
+    slug:
+      data.slug ||
+      uniqueSlug(title),
+
+    title,
+
+    prompt:
+      String(data.prompt || '')
+        .trim()
+        .slice(0, 10000),
+
+    media:
+      data.media || 'Image',
+
+    model:
+      data.model || 'Any',
+
+    category:
+      data.category || 'General',
+
+    imageUrl:
+      safeUrl(data.imageUrl || ''),
+
+    source:
+      data.source ||
+      (automatic
+        ? 'Automatic'
+        : 'Admin'),
+
+    sourceUrl:
+      safeUrl(data.sourceUrl || ''),
+
+    license:
+      data.license || 'Unknown',
+
+    publishedAt:
+      data.publishedAt ||
+      new Date().toISOString(),
+
+    auto:
+      automatic ? 1 : 0
+  };
+}
+
+/* =========================================
+   PROMPT SEARCH
+========================================= */
+
+function searchPrompts(query = {}) {
+
+  let items = db.getPrompts();
+
+  const q =
+    String(query.q || '')
+      .trim()
+      .toLowerCase();
+
+  if (q) {
+    items = items.filter(p =>
+      [
+        p.title,
+        p.prompt,
+        p.category,
+        p.model,
+        p.media
+      ]
+        .join(' ')
+        .toLowerCase()
+        .includes(q)
+    );
+  }
+
+  if (
+    query.media &&
+    query.media !== 'all'
+  ) {
+    items = items.filter(
+      p =>
+        String(p.media)
+          .toLowerCase() ===
+        String(query.media)
+          .toLowerCase()
+    );
+  }
+
+  if (
+    query.category &&
+    query.category !== 'all'
+  ) {
+    items = items.filter(
+      p =>
+        String(p.category)
+          .toLowerCase() ===
+        String(query.category)
+          .toLowerCase()
+    );
+  }
+
+  return items.sort(
+    (a, b) =>
+      new Date(b.publishedAt || 0) -
+      new Date(a.publishedAt || 0)
+  );
+}
+
+/* =========================================
+   PUBLIC PROMPT API
+========================================= */
+
+app.get('/api/prompts', (req, res) => {
+  res.json(
+    searchPrompts(req.query)
+  );
+});
+
+app.get(
+  '/api/prompts/:slug',
+  (req, res) => {
+
+    const prompt =
+      findPromptBySlug(
+        req.params.slug
+      );
+
+    if (!prompt) {
+      return res
+        .status(404)
+        .json({
+          error: 'Prompt not found'
+        });
+    }
+
+    res.json(prompt);
+  }
+);
+
+app.get('/api/categories', (req, res) => {
+
+  const categories = {};
+
+  db.getPrompts().forEach(p => {
+
+    const name =
+      p.category || 'General';
+
+    categories[name] =
+      (categories[name] || 0) + 1;
+  });
+
+  res.json(categories);
+});
+
+/* =========================================
+   PUBLIC COPY-GATE SETTINGS
+========================================= */
+
+app.get(
+  '/api/public/settings',
+  (req, res) => {
+
+    res.json({
+      copyGateSeconds:
+        Number(
+          getSetting(
+            'copyGateSeconds',
+            10
+          )
+        ),
+
+      directLink:
+        safeUrl(
+          getSetting(
+            'directLink',
+            ''
+          )
+        )
+    });
+  }
+);
+
+/* =========================================
+   ADS
+========================================= */
+
+app.get('/api/ads', (req, res) => {
+
+  const ads = db.getAds();
+
+  res.json({
+    ...ads,
+
+    smart_link:
+      safeUrl(
+        getSetting(
+          'directLink',
+          ''
+        )
+      )
+  });
+});
+
+/* =========================================
+   ADMIN AUTH
+========================================= */
+
+function adminOnly(req, res, next) {
+
+  if (req.session?.admin) {
+    return next();
+  }
+
+  res
+    .status(401)
+    .json({
+      error: 'Unauthorized'
+    });
+}
+
+const loginAttempts = new Map();
+
+app.post('/api/login', (req, res) => {
+
+  const username =
+    process.env.ADMIN_USERNAME ||
+    'admin';
+
+  const password =
+    process.env.ADMIN_PASSWORD;
+
+  if (!password) {
+    return res
+      .status(503)
+      .json({
+        error:
+          'ADMIN_PASSWORD is not configured'
+      });
+  }
+
+  const ip = req.ip;
+
+  const attempt =
+    loginAttempts.get(ip) || {
+      count: 0,
+      time: 0
+    };
+
+  if (
+    attempt.count >= 5 &&
+    Date.now() - attempt.time <
+      15 * 60 * 1000
+  ) {
+    return res
+      .status(429)
+      .json({
+        error:
+          'Too many login attempts'
+      });
+  }
+
+  const valid =
+    sameSecret(
+      req.body?.username,
+      username
+    ) &&
+    sameSecret(
+      req.body?.password,
+      password
+    );
+
+  if (!valid) {
+
+    loginAttempts.set(
+      ip,
+      {
+        count:
+          attempt.count + 1,
+        time: Date.now()
+      }
+    );
+
+    return res
+      .status(401)
+      .json({
+        error:
+          'Invalid username or password'
+      });
+  }
+
+  loginAttempts.delete(ip);
+
+  req.session.admin = true;
+
+  res.json({
+    ok: true
+  });
+});
+
+app.post('/api/logout', (req, res) => {
+
+  req.session.destroy(() => {
+    res.json({
+      ok: true
+    });
+  });
+});
+
+app.get('/api/admin/me', (req, res) => {
+
+  res.json({
+    authenticated:
+      !!req.session?.admin
+  });
+});
+
+/* =========================================
+   ADMIN PROMPTS
+========================================= */
+
+app.get(
+  '/api/admin/prompts',
+  adminOnly,
+  (req, res) => {
+
+    res.json(
+      db.getPrompts()
+    );
+  }
+);
+
+app.post(
+  '/api/admin/prompts',
+  adminOnly,
+  (req, res) => {
+
+    if (
+      !req.body?.title ||
+      !req.body?.prompt
+    ) {
+      return res
+        .status(400)
+        .json({
+          error:
+            'Title and prompt are required'
+        });
+    }
+
+    const prompt =
+      createPrompt(req.body);
+
+    db.addPrompt(prompt);
+
+    res.json(prompt);
+  }
+);
+
+app.delete(
+  '/api/admin/prompts/:id',
+  adminOnly,
+  (req, res) => {
+
+    db.deletePrompt(
+      req.params.id
+    );
+
+    res.json({
+      ok: true
+    });
+  }
+);
+
+/* =========================================
+   UNLIMITED API PROVIDERS
+========================================= */
+
+const VALID_CATEGORIES = [
+  'prompt_generate',
+  'photo_generate',
+  'trending_search'
+];
+
+app.get(
+  '/api/admin/providers',
+  adminOnly,
+  (req, res) => {
+
+    const providers =
+      db.getApiProviders();
+
+    res.json(
+      providers.map(p => ({
+        ...p,
+
+        apiKey:
+          p.apiKey
+            ? '••••••••'
+            : ''
+      }))
+    );
+  }
+);
+
+app.post(
+  '/api/admin/providers',
+  adminOnly,
+  (req, res) => {
+
+    const {
+      category,
+      providerName,
+      apiKey
+    } = req.body || {};
+
+    if (
+      !VALID_CATEGORIES.includes(
+        category
+      )
+    ) {
+      return res
+        .status(400)
+        .json({
+          error:
+            'Invalid category'
+        });
+    }
+
+    if (!providerName) {
+      return res
+        .status(400)
+        .json({
+          error:
+            'Provider name is required'
+        });
+    }
+
+    const provider =
+      db.addApiProvider({
+        category,
+        providerName,
+        apiKey: apiKey || '',
+        enabled: true
+      });
+
+    res.json({
+      ok: true,
+      provider
+    });
+  }
+);
+
+app.put(
+  '/api/admin/providers/:id',
+  adminOnly,
+  (req, res) => {
+
+    const providers =
+      db.getApiProviders();
+
+    const old =
+      providers.find(
+        p =>
+          String(p.id) ===
+          String(req.params.id)
+      );
+
+    if (!old) {
+      return res
+        .status(404)
+        .json({
+          error:
+            'Provider not found'
+        });
+    }
+
+    const changes = {
+      ...req.body
+    };
+
+    if (
+      !changes.apiKey ||
+      changes.apiKey ===
+        '••••••••'
+    ) {
+      delete changes.apiKey;
+    }
+
+    db.updateApiProvider(
+      req.params.id,
+      changes
+    );
+
+    res.json({
+      ok: true
+    });
+  }
+);
+
+app.delete(
+  '/api/admin/providers/:id',
+  adminOnly,
+  (req, res) => {
+
+    db.deleteApiProvider(
+      req.params.id
+    );
+
+    res.json({
+      ok: true
+    });
+  }
+);
+
+/* =========================================
+   ADMIN SETTINGS
+========================================= */
+
+app.get(
+  '/api/admin/settings',
+  adminOnly,
+  (req, res) => {
+
+    res.json({
+      autoPostEnabled:
+        getSetting(
+          'autoPostEnabled',
+          true
+        ),
+
+      cron:
+        getSetting(
+          'cron',
+          '0 */6 * * *'
+        ),
+
+      copyGateSeconds:
+        getSetting(
+          'copyGateSeconds',
+          10
+        ),
+
+      directLink:
+        get
