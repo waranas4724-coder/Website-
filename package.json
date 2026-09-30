@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "private": true,
   "engines": {
-    "node": ">=18"
+    "node": "26.10.0"
   },
   "description": "Prompt library with protected admin panel and automatic publishing.",
   "main": "server.js",
@@ -16,6 +16,6 @@
     "express": "^5.1.0",
     "express-session": "^1.18.2",
     "node-cron": "^4.2.1",
-    "better-sqlite3": "^11.10.0"
+    "better-sqlite3": "12.10.0"
   }
 }
