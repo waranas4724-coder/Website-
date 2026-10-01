@@ -1,8 +1,7 @@
 {
-  "autoPostEnabled": true,
-  "trendEnabled": true,
-  "trendCountries": ["US", "GB", "AE", "IN", "JP", "DE", "FR", "BR"],
-  "copyGateEnabled": true,
+  "autoPost": true,
+  "postIntervalMinutes": 60,
+  "postsPerRun": 1,
   "copyGateSeconds": 10,
-  "cron": "*/30 * * * *"
+  "directLink": ""
 }
