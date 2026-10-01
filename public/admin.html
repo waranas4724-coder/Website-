@@ -1,16 +1,1321 @@
-<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Admin · PromptForge</title><link rel="stylesheet" href="/styles.css"></head><body><main class="wrap" style="padding:40px 0;max-width:1100px"><a href="/" class="muted">← Back</a><div id="login" style="max-width:420px;margin:70px auto"><span class="kicker">PRIVATE ADMIN</span><h1>Control Room</h1><input id="user" placeholder="Username" class="field"><input id="pass" type="password" placeholder="Password" class="field"><button id="loginBtn" class="copy">Sign in</button><p id="err" class="muted"></p></div><div id="panel" style="display:none"><div class="section-head"><div><span class="kicker">CONTROL ROOM</span><h1>PromptForge Admin</h1></div><button id="logout" class="pill">Logout</button></div>
-<div class="card admin-card"><h3>⚙️ API Providers — unlimited</h3><p class="muted">Add as many APIs as you want. Lower priority number runs first; failed providers automatically fall back to the next enabled provider.</p><div class="two"><select id="pcat" class="field"><option value="prompt_generate">Prompt Generate</option><option value="photo_generate">Photo Generate</option><option value="trending_search">Trending Search</option></select><input id="pname" class="field" placeholder="Provider name"></div><div class="two"><input id="purl" class="field" placeholder="API endpoint URL"><input id="pkey" class="field" placeholder="API key"></div><div class="two"><select id="pmethod" class="field"><option>GET</option><option>POST</option></select><input id="priority" class="field" type="number" value="100" placeholder="Priority"></div><input id="model" class="field" placeholder="Model (optional)"><textarea id="headers" class="field" rows="2" placeholder='Headers JSON, e.g. {"x-api-key":"{{api_key}}"}'>{}</textarea><textarea id="body" class="field" rows="4" placeholder='POST body template JSON, e.g. {"prompt":"{{topic}}"}'></textarea><input id="paths" class="field" placeholder='Response paths JSON, e.g. {"prompt":"choices.0.message.content"} or {"imageUrl":"data.url"} or {"topics":"items"}' value='{}'><input id="notes" class="field" placeholder="Notes"><button id="addProvider" class="copy">+ Add API provider</button><span id="pstatus" class="muted"></span><div id="providers" style="margin-top:15px"></div></div>
-<div class="card admin-card"><h3>🤖 Automatic posting</h3><label><input id="auto" type="checkbox"> Enable automatic posting</label><div class="two"><input id="cron" class="field" value="*/30 * * * *" placeholder="Cron schedule"><input id="copySec" class="field" type="number" value="10" placeholder="Copy countdown seconds"></div><input id="direct" class="field" placeholder="Direct-link URL opened before copy"><button id="saveSettings" class="pill">Save settings</button> <button id="runNow" class="pill">Run now</button></div>
-<div class="card admin-card"><h3>📢 Ads</h3><div id="adsBox"></div><button id="saveAds" class="copy">Save ads</button></div>
-<div class="card admin-card"><h3>✍️ Manual prompt</h3><input id="title" class="field" placeholder="Title"><textarea id="prompt" class="field" rows="6" placeholder="Prompt"></textarea><div class="two"><input id="model2" class="field" placeholder="Model"><input id="category" class="field" placeholder="Category"></div><button id="publish" class="copy">Publish</button><span id="status" class="muted"></span></div><h2>Published prompts</h2><div id="list"></div></div></main>
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Admin · PromptForge</title>
+  <link rel="stylesheet" href="/styles.css">
+
+  <style>
+    .field{
+      display:block;
+      width:100%;
+      box-sizing:border-box;
+      padding:12px;
+      margin:7px 0;
+      background:#101014;
+      border:1px solid #303036;
+      color:#fff;
+      border-radius:10px;
+    }
+
+    .two{
+      display:grid;
+      grid-template-columns:1fr 1fr;
+      gap:8px;
+    }
+
+    .admin-card{
+      padding:20px;
+      margin:16px 0;
+    }
+
+    .provider,
+    .ad-slot{
+      padding:14px 0;
+      border-top:1px solid #29292f;
+    }
+
+    .provider-actions{
+      display:flex;
+      gap:8px;
+      margin-top:8px;
+    }
+
+    .success{
+      color:#6ee7a8;
+    }
+
+    .danger{
+      color:#ff7777;
+    }
+
+    .setting-help{
+      font-size:13px;
+      opacity:.7;
+      margin-top:-2px;
+      margin-bottom:10px;
+    }
+
+    .number-row{
+      display:grid;
+      grid-template-columns:1fr 1fr;
+      gap:8px;
+    }
+
+    .ad-code{
+      min-height:100px;
+      font-family:monospace;
+    }
+
+    @media(max-width:650px){
+      .two,
+      .number-row{
+        grid-template-columns:1fr;
+      }
+    }
+  </style>
+</head>
+
+<body>
+
+<main class="wrap" style="padding:40px 0;max-width:1100px">
+
+  <a href="/" class="muted">← Back</a>
+
+  <!-- LOGIN -->
+  <div id="login" style="max-width:420px;margin:70px auto">
+
+    <span class="kicker">PRIVATE ADMIN</span>
+
+    <h1>Control Room</h1>
+
+    <input
+      id="user"
+      placeholder="Username"
+      class="field"
+      autocomplete="username"
+    >
+
+    <input
+      id="pass"
+      type="password"
+      placeholder="Password"
+      class="field"
+      autocomplete="current-password"
+    >
+
+    <button id="loginBtn" class="copy">
+      Sign in
+    </button>
+
+    <p id="err" class="muted"></p>
+
+  </div>
+
+
+  <!-- ADMIN PANEL -->
+  <div id="panel" style="display:none">
+
+    <div class="section-head">
+
+      <div>
+        <span class="kicker">CONTROL ROOM</span>
+        <h1>PromptForge Admin</h1>
+      </div>
+
+      <button id="logout" class="pill">
+        Logout
+      </button>
+
+    </div>
+
+
+    <!-- =================================================
+         OPENAI API
+    ================================================== -->
+
+    <div class="card admin-card">
+
+      <h3>🤖 OpenAI API Accounts</h3>
+
+      <p class="muted">
+        Add unlimited OpenAI API accounts.
+        The system will automatically use another
+        enabled account if one fails.
+      </p>
+
+      <input
+        id="pname"
+        class="field"
+        placeholder="Account / Provider name"
+      >
+
+      <input
+        id="pkey"
+        class="field"
+        type="password"
+        placeholder="OpenAI API key"
+        autocomplete="off"
+      >
+
+      <button id="addProvider" class="copy">
+        + Add OpenAI API
+      </button>
+
+      <span id="pstatus" class="muted"></span>
+
+      <div id="providers" style="margin-top:15px"></div>
+
+    </div>
+
+
+    <!-- =================================================
+         AUTOMATIC POSTING
+    ================================================== -->
+
+    <div class="card admin-card">
+
+      <h3>⚡ Automatic Posting</h3>
+
+      <p class="muted">
+        One automatic post contains the generated
+        AI photo + the exact prompt used to create it.
+      </p>
+
+      <label>
+        <input id="auto" type="checkbox">
+        Enable automatic posting
+      </label>
+
+      <br><br>
+
+      <div class="number-row">
+
+        <div>
+          <label class="muted">
+            Post interval (minutes)
+          </label>
+
+          <input
+            id="interval"
+            class="field"
+            type="number"
+            min="1"
+            max="1440"
+            value="60"
+          >
+
+          <div class="setting-help">
+            Example: 60 = one post every hour
+          </div>
+        </div>
+
+        <div>
+          <label class="muted">
+            Posts per run
+          </label>
+
+          <input
+            id="postsPerRun"
+            class="field"
+            type="number"
+            min="1"
+            max="20"
+            value="1"
+          >
+
+          <div class="setting-help">
+            Recommended: 1
+          </div>
+        </div>
+
+      </div>
+
+      <div class="number-row">
+
+        <div>
+          <label class="muted">
+            Copy countdown (seconds)
+          </label>
+
+          <input
+            id="copySec"
+            class="field"
+            type="number"
+            min="0"
+            max="120"
+            value="10"
+          >
+        </div>
+
+        <div>
+          <label class="muted">
+            Direct-link URL
+          </label>
+
+          <input
+            id="direct"
+            class="field"
+            placeholder="https://..."
+          >
+        </div>
+
+      </div>
+
+      <button id="saveSettings" class="pill">
+        Save settings
+      </button>
+
+      <button id="runNow" class="pill">
+        ▶ Run now
+      </button>
+
+      <span id="settingStatus" class="muted"></span>
+
+    </div>
+
+
+    <!-- =================================================
+         ADS
+    ================================================== -->
+
+    <div class="card admin-card">
+
+      <h3>📢 Ads Manager</h3>
+
+      <p class="muted">
+        Ads are completely separate from the API system.
+        Add your ad code to the slot you want.
+      </p>
+
+      <div id="adsBox"></div>
+
+      <button id="saveAds" class="copy">
+        Save Ads
+      </button>
+
+      <span id="adsStatus" class="muted"></span>
+
+    </div>
+
+
+    <!-- =================================================
+         MANUAL POST
+    ================================================== -->
+
+    <div class="card admin-card">
+
+      <h3>✍️ Manual Prompt</h3>
+
+      <input
+        id="title"
+        class="field"
+        placeholder="Title"
+      >
+
+      <textarea
+        id="prompt"
+        class="field"
+        rows="6"
+        placeholder="Prompt"
+      ></textarea>
+
+      <div class="two">
+
+        <input
+          id="model2"
+          class="field"
+          placeholder="Model"
+        >
+
+        <input
+          id="category"
+          class="field"
+          placeholder="Category"
+        >
+
+      </div>
+
+      <input
+        id="imageUrl"
+        class="field"
+        placeholder="Image URL (optional)"
+      >
+
+      <button id="publish" class="copy">
+        Publish
+      </button>
+
+      <span id="status" class="muted"></span>
+
+    </div>
+
+
+    <!-- =================================================
+         PUBLISHED POSTS
+    ================================================== -->
+
+    <h2>Published Posts</h2>
+
+    <div id="list"></div>
+
+  </div>
+
+</main>
+
+
 <script>
-const $=id=>document.getElementById(id),esc=s=>String(s??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[m]));
-async function me(){let x=await(await fetch('/api/admin/me')).json();if(x.authenticated)show();}
-function show(){$('login').style.display='none';$('panel').style.display='block';load();loadProviders();loadSettings();loadAds()}
-$('loginBtn').onclick=async()=>{let r=await fetch('/api/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username:$('user').value,password:$('pass').value})});if(r.ok)show();else $('err').textContent='Invalid credentials'};$('logout').onclick=async()=>{await fetch('/api/logout',{method:'POST'});location.reload()};
-$('addProvider').onclick=async()=>{let b={name:$('pname').value,category:$('pcat').value,base_url:$('purl').value,api_key:$('pkey').value,method:$('pmethod').value,priority:+$('priority').value||100,model:$('model').value,notes:$('notes').value,body_template:$('body').value,headers:JSON.parse($('headers').value||'{}'),response_paths:JSON.parse($('paths').value||'{}')};let r=await fetch('/api/admin/providers',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(b)});$('pstatus').textContent=r.ok?' Added ✓':' Check JSON/settings';if(r.ok){$('pkey').value='';loadProviders()}};
-async function loadProviders(){let a=await (await fetch('/api/admin/providers')).json();$('providers').innerHTML=a.map(p=>`<div class="provider"><b>${esc(p.name)}</b> · <span>${esc(p.category)}</span> · priority ${p.priority} ${p.enabled?'':'· disabled'}<button class="pill" style="float:right" onclick="delProvider(${p.id})">Delete</button><br><small class="muted">${esc(p.base_url)}</small></div>`).join('')||'<p class="muted">No providers yet.</p>'}async function delProvider(id){await fetch('/api/admin/providers/'+id,{method:'DELETE'});loadProviders()}
-async function loadSettings(){let x=await(await fetch('/api/admin/settings')).json();$('auto').checked=!!x.autoPostEnabled;$('cron').value=x.cron||'*/30 * * * *';$('copySec').value=x.copyGateSeconds??10;$('direct').value=x.directLink||''} $('saveSettings').onclick=async()=>{await fetch('/api/admin/settings',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({autoPostEnabled:$('auto').checked,cron:$('cron').value,copyGateSeconds:+$('copySec').value,directLink:$('direct').value})});alert('Settings saved')};$('runNow').onclick=async()=>{let x=await(await fetch('/api/admin/collect',{method:'POST'})).json();alert(JSON.stringify(x));load()};
-const S=['head_code','popunder','social_bar','banner_top','banner_middle','banner_bottom','modal_banner','native_banner'];async function loadAds(){let a=await(await fetch('/api/admin/ads')).json();$('adsBox').innerHTML=S.map(k=>{let x=a.find(v=>v.slot===k)||{};return `<div style="border-top:1px solid #29292f;padding:10px 0"><label><input type="checkbox" id="on_${k}" ${x.enabled?'checked':''}> ${k}</label><textarea id="code_${k}" class="field" rows="3" placeholder="Ad code">${esc(x.code||'')}</textarea><input id="h_${k}" class="field" type="number" value="${x.height||0}" placeholder="Height px"></div>`}).join('')};$('saveAds').onclick=async()=>{let b={};S.forEach(k=>b[k]={enabled:$('on_'+k).checked,code:$('code_'+k).value,height:+$('h_'+k).value||0});await fetch('/api/admin/ads',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(b)});alert('Ads saved')};
-$('publish').onclick=async()=>{let r=await fetch('/api/admin/prompts',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({title:$('title').value,prompt:$('prompt').value,model:$('model2').value,category:$('category').value})});$('status').textContent=r.ok?' Published ✓':' Failed';if(r.ok)load()};async function load(){let a=await(await fetch('/api/admin/prompts')).json();$('list').innerHTML=a.slice(0,100).map(p=>`<div class="card" style="padding:12px;margin:7px 0;display:flex;justify-content:space-between"><span><b>${esc(p.title)}</b><br><small class="muted">${esc(p.category)} · ${p.auto?'AUTO':'MANUAL'}</small></span><button class="pill" onclick="del('${p.id}')">Delete</button></div>`).join('')||'<p class="muted">No prompts.</p>'}async function del(id){await fetch('/api/admin/prompts/'+id,{method:'DELETE'});load()}me();
-</script><style>.field{display:block;width:100%;box-sizing:border-box;padding:12px;margin:7px 0;background:#101014;border:1px solid #303036;color:#fff;border-radius:10px}.two{display:grid;grid-template-columns:1fr 1fr;gap:8px}.admin-card{padding:20px;margin:16px 0}.provider{padding:12px;border-top:1px solid #29292f}@media(max-width:650px){.two{grid-template-columns:1fr}}</style></body></html>
+
+const $ = (id) =>
+  document.getElementById(id);
+
+
+const esc = (s) =>
+  String(s ?? '').replace(
+    /[&<>"']/g,
+    (m) => ({
+      '&':'&amp;',
+      '<':'&lt;',
+      '>':'&gt;',
+      '"':'&quot;',
+      "'":'&#039;'
+    }[m])
+  );
+
+
+/* =======================================================
+   AUTH
+======================================================= */
+
+async function me(){
+
+  try{
+
+    const r =
+      await fetch('/api/admin/me');
+
+    const x =
+      await r.json();
+
+    if(x.authenticated){
+      show();
+    }
+
+  }catch(error){
+
+    console.error(error);
+
+  }
+
+}
+
+
+function show(){
+
+  $('login').style.display =
+    'none';
+
+  $('panel').style.display =
+    'block';
+
+  load();
+  loadProviders();
+  loadSettings();
+  loadAds();
+
+}
+
+
+/* LOGIN */
+
+$('loginBtn').onclick =
+  async () => {
+
+    const r =
+      await fetch(
+        '/api/login',
+        {
+          method:'POST',
+          headers:{
+            'Content-Type':
+              'application/json'
+          },
+          body:JSON.stringify({
+            username:
+              $('user').value,
+
+            password:
+              $('pass').value
+          })
+        }
+      );
+
+    if(r.ok){
+
+      show();
+
+    }else{
+
+      $('err').textContent =
+        'Invalid username or password';
+
+    }
+
+  };
+
+
+/* LOGOUT */
+
+$('logout').onclick =
+  async () => {
+
+    await fetch(
+      '/api/logout',
+      {
+        method:'POST'
+      }
+    );
+
+    location.reload();
+
+  };
+
+
+/* =======================================================
+   OPENAI API PROVIDERS
+======================================================= */
+
+$('addProvider').onclick =
+  async () => {
+
+    const providerName =
+      $('pname').value.trim();
+
+    const apiKey =
+      $('pkey').value.trim();
+
+    if(!providerName){
+
+      $('pstatus').textContent =
+        'Provider name required';
+
+      return;
+
+    }
+
+    if(!apiKey){
+
+      $('pstatus').textContent =
+        'OpenAI API key required';
+
+      return;
+
+    }
+
+    $('pstatus').textContent =
+      'Adding...';
+
+
+    const r =
+      await fetch(
+        '/api/admin/providers',
+        {
+          method:'POST',
+          headers:{
+            'Content-Type':
+              'application/json'
+          },
+
+          body:JSON.stringify({
+
+            category:
+              'prompt_generate',
+
+            providerName,
+
+            apiKey
+
+          })
+
+        }
+      );
+
+
+    if(r.ok){
+
+      $('pname').value = '';
+      $('pkey').value = '';
+
+      $('pstatus').innerHTML =
+        '<span class="success">Added ✓</span>';
+
+      loadProviders();
+
+    }else{
+
+      const x =
+        await r.json()
+          .catch(() => ({}));
+
+      $('pstatus').textContent =
+        x.error ||
+        'Could not add API';
+
+    }
+
+  };
+
+
+/* LOAD API LIST */
+
+async function loadProviders(){
+
+  const r =
+    await fetch(
+      '/api/admin/providers'
+    );
+
+  if(!r.ok){
+
+    $('providers').innerHTML =
+      '<p class="muted">Could not load APIs.</p>';
+
+    return;
+
+  }
+
+  const providers =
+    await r.json();
+
+
+  $('providers').innerHTML =
+    providers.map(
+      (p) => `
+
+        <div class="provider">
+
+          <b>
+            ${esc(
+              p.providerName ||
+              p.name ||
+              'OpenAI'
+            )}
+          </b>
+
+          <span class="muted">
+            · OpenAI
+          </span>
+
+          <div class="provider-actions">
+
+            <button
+              class="pill"
+              onclick="toggleProvider('${esc(p.id)}', ${p.enabled !== false})"
+            >
+              ${p.enabled !== false
+                ? 'Disable'
+                : 'Enable'}
+            </button>
+
+            <button
+              class="pill"
+              onclick="delProvider('${esc(p.id)}')"
+            >
+              Delete
+            </button>
+
+          </div>
+
+        </div>
+
+      `
+    ).join('') ||
+
+    '<p class="muted">No OpenAI APIs added yet.</p>';
+
+}
+
+
+/* ENABLE / DISABLE */
+
+async function toggleProvider(
+  id,
+  enabled
+){
+
+  await fetch(
+    '/api/admin/providers/' +
+      encodeURIComponent(id),
+    {
+      method:'PUT',
+      headers:{
+        'Content-Type':
+          'application/json'
+      },
+
+      body:JSON.stringify({
+        enabled:!enabled
+      })
+    }
+  );
+
+  loadProviders();
+
+}
+
+
+/* DELETE */
+
+async function delProvider(id){
+
+  if(
+    !confirm(
+      'Delete this OpenAI API account?'
+    )
+  ){
+
+    return;
+
+  }
+
+  await fetch(
+    '/api/admin/providers/' +
+      encodeURIComponent(id),
+    {
+      method:'DELETE'
+    }
+  );
+
+  loadProviders();
+
+}
+
+
+/* =======================================================
+   AUTOMATIC POST SETTINGS
+======================================================= */
+
+async function loadSettings(){
+
+  const r =
+    await fetch(
+      '/api/admin/settings'
+    );
+
+  if(!r.ok){
+    return;
+  }
+
+  const x =
+    await r.json();
+
+
+  $('auto').checked =
+    x.autoPost !== false;
+
+
+  $('interval').value =
+    x.postIntervalMinutes ??
+    60;
+
+
+  $('postsPerRun').value =
+    x.postsPerRun ??
+    1;
+
+
+  $('copySec').value =
+    x.copyGateSeconds ??
+    10;
+
+
+  $('direct').value =
+    x.directLink ||
+    '';
+
+}
+
+
+/* SAVE SETTINGS */
+
+$('saveSettings').onclick =
+  async () => {
+
+    $('settingStatus').textContent =
+      'Saving...';
+
+
+    const interval =
+      Math.max(
+        1,
+        Math.min(
+          1440,
+          Number(
+            $('interval').value ||
+            60
+          )
+        )
+      );
+
+
+    const postsPerRun =
+      Math.max(
+        1,
+        Math.min(
+          20,
+          Number(
+            $('postsPerRun').value ||
+            1
+          )
+        )
+      );
+
+
+    const copySec =
+      Math.max(
+        0,
+        Math.min(
+          120,
+          Number(
+            $('copySec').value ||
+            10
+          )
+        )
+      );
+
+
+    const r =
+      await fetch(
+        '/api/admin/settings',
+        {
+          method:'PUT',
+
+          headers:{
+            'Content-Type':
+              'application/json'
+          },
+
+          body:JSON.stringify({
+
+            autoPost:
+              $('auto').checked,
+
+            postIntervalMinutes:
+              interval,
+
+            postsPerRun,
+
+            copyGateSeconds:
+              copySec,
+
+            directLink:
+              $('direct').value.trim()
+
+          })
+
+        }
+      );
+
+
+    if(r.ok){
+
+      $('settingStatus').innerHTML =
+        '<span class="success">Settings saved ✓</span>';
+
+    }else{
+
+      $('settingStatus').textContent =
+        'Could not save settings';
+
+    }
+
+  };
+
+
+/* RUN NOW */
+
+$('runNow').onclick =
+  async () => {
+
+    $('settingStatus').textContent =
+      'Creating post...';
+
+
+    try{
+
+      const r =
+        await fetch(
+          '/api/admin/auto-post/run',
+          {
+            method:'POST'
+          }
+        );
+
+
+      const x =
+        await r.json();
+
+
+      if(x.ok){
+
+        $('settingStatus').innerHTML =
+          '<span class="success">Post created ✓</span>';
+
+        load();
+
+      }else{
+
+        $('settingStatus').textContent =
+          x.error ||
+          x.reason ||
+          'Post was not created';
+
+      }
+
+    }catch(error){
+
+      $('settingStatus').textContent =
+        'Automatic post failed';
+
+    }
+
+  };
+
+
+/* =======================================================
+   ADS
+======================================================= */
+
+const AD_SLOTS = [
+
+  {
+    key:'head_code',
+    title:'Head Code'
+  },
+
+  {
+    key:'popunder',
+    title:'Popunder'
+  },
+
+  {
+    key:'social_bar',
+    title:'Social Bar'
+  },
+
+  {
+    key:'banner_top',
+    title:'Top Banner'
+  },
+
+  {
+    key:'banner_middle',
+    title:'Middle Banner'
+  },
+
+  {
+    key:'banner_bottom',
+    title:'Bottom Banner'
+  },
+
+  {
+    key:'modal_banner',
+    title:'Popup / Modal Banner'
+  },
+
+  {
+    key:'native_banner',
+    title:'Native Banner'
+  }
+
+];
+
+
+async function loadAds(){
+
+  const r =
+    await fetch(
+      '/api/admin/ads'
+    );
+
+  if(!r.ok){
+    return;
+  }
+
+  const data =
+    await r.json();
+
+
+  /*
+    Supports both:
+    {
+      banner_top: {...}
+    }
+
+    and older:
+    [
+      {
+        slot:'banner_top'
+      }
+    ]
+  */
+
+  function getAd(key){
+
+    if(Array.isArray(data)){
+
+      return (
+        data.find(
+          x => x.slot === key
+        ) || {}
+      );
+
+    }
+
+    return data[key] || {};
+
+  }
+
+
+  $('adsBox').innerHTML =
+    AD_SLOTS.map(
+      slot => {
+
+        const ad =
+          getAd(slot.key);
+
+
+        return `
+
+          <div class="ad-slot">
+
+            <h4>
+              📢 ${esc(slot.title)}
+            </h4>
+
+            <label>
+
+              <input
+                type="checkbox"
+                id="on_${slot.key}"
+                ${ad.enabled ? 'checked' : ''}
+              >
+
+              Enable
+
+            </label>
+
+
+            <textarea
+              id="code_${slot.key}"
+              class="field ad-code"
+              rows="5"
+              placeholder="Paste ad HTML / JavaScript code here"
+            >${esc(ad.code || '')}</textarea>
+
+
+            <input
+              id="height_${slot.key}"
+              class="field"
+              type="number"
+              min="0"
+              value="${Number(ad.height || 0)}"
+              placeholder="Height in px (optional)"
+            >
+
+          </div>
+
+        `;
+
+      }
+    ).join('');
+
+}
+
+
+/* SAVE ADS */
+
+$('saveAds').onclick =
+  async () => {
+
+    $('adsStatus').textContent =
+      'Saving ads...';
+
+
+    /*
+      Send object format.
+      This is the format the new server uses.
+    */
+
+    const ads = {};
+
+
+    AD_SLOTS.forEach(
+      slot => {
+
+        ads[slot.key] = {
+
+          enabled:
+            $('on_' + slot.key)
+              .checked,
+
+          code:
+            $('code_' + slot.key)
+              .value,
+
+          height:
+            Number(
+              $('height_' + slot.key)
+                .value || 0
+            )
+
+        };
+
+      }
+    );
+
+
+    const r =
+      await fetch(
+        '/api/admin/ads',
+        {
+          method:'PUT',
+
+          headers:{
+            'Content-Type':
+              'application/json'
+          },
+
+          body:JSON.stringify(ads)
+
+        }
+      );
+
+
+    if(r.ok){
+
+      $('adsStatus').innerHTML =
+        '<span class="success">Ads saved ✓</span>';
+
+    }else{
+
+      $('adsStatus').textContent =
+        'Could not save ads';
+
+    }
+
+  };
+
+
+/* =======================================================
+   MANUAL PROMPT
+======================================================= */
+
+$('publish').onclick =
+  async () => {
+
+    const title =
+      $('title').value.trim();
+
+    const prompt =
+      $('prompt').value.trim();
+
+
+    if(!title || !prompt){
+
+      $('status').textContent =
+        'Title and prompt are required';
+
+      return;
+
+    }
+
+
+    const r =
+      await fetch(
+        '/api/admin/prompts',
+        {
+          method:'POST',
+
+          headers:{
+            'Content-Type':
+              'application/json'
+          },
+
+          body:JSON.stringify({
+
+            title,
+
+            prompt,
+
+            model:
+              $('model2').value ||
+              'Manual',
+
+            category:
+              $('category').value ||
+              'General',
+
+            imageUrl:
+              $('imageUrl').value ||
+              ''
+
+          })
+
+        }
+      );
+
+
+    if(r.ok){
+
+      $('title').value = '';
+      $('prompt').value = '';
+      $('model2').value = '';
+      $('category').value = '';
+      $('imageUrl').value = '';
+
+      $('status').innerHTML =
+        '<span class="success">Published ✓</span>';
+
+      load();
+
+    }else{
+
+      $('status').textContent =
+        'Publish failed';
+
+    }
+
+  };
+
+
+/* =======================================================
+   POSTS
+======================================================= */
+
+async function load(){
+
+  const r =
+    await fetch(
+      '/api/prompts'
+    );
+
+  if(!r.ok){
+
+    $('list').innerHTML =
+      '<p class="muted">Could not load posts.</p>';
+
+    return;
+
+  }
+
+  const items =
+    await r.json();
+
+
+  $('list').innerHTML =
+    items
+      .slice(0,100)
+      .map(
+        p => `
+
+          <div
+            class="card"
+            style="
+              padding:12px;
+              margin:7px 0;
+              display:flex;
+              justify-content:space-between;
+              gap:15px;
+            "
+          >
+
+            <span>
+
+              <b>
+                ${esc(p.title)}
+              </b>
+
+              <br>
+
+              <small class="muted">
+
+                ${esc(
+                  p.category ||
+                  'General'
+                )}
+
+                ·
+
+                ${esc(
+                  p.model ||
+                  'Unknown'
+                )}
+
+                ·
+
+                ${p.imageUrl
+                  ? 'Photo ✓'
+                  : 'No photo'}
+
+              </small>
+
+            </span>
+
+
+            <button
+              class="pill"
+              onclick="delPrompt('${esc(p.id)}')"
+            >
+              Delete
+            </button>
+
+          </div>
+
+        `
+      )
+      .join('') ||
+
+    '<p class="muted">No prompts yet.</p>';
+
+}
+
+
+/* DELETE POST */
+
+async function delPrompt(id){
+
+  if(
+    !confirm(
+      'Delete this post?'
+    )
+  ){
+
+    return;
+
+  }
+
+
+  await fetch(
+    '/api/admin/prompts/' +
+      encodeURIComponent(id),
+    {
+      method:'DELETE'
+    }
+  );
+
+
+  load();
+
+}
+
+
+/* START */
+
+me();
+
+</script>
+
+</body>
+</html>
