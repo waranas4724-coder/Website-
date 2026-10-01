@@ -3,43 +3,58 @@ require('dotenv').config();
 const express = require('express');
 const session = require('express-session');
 const cron = require('node-cron');
-const crypto = require('crypto');
+const OpenAI = require('openai');
 const path = require('path');
+const fs = require('fs');
 
 const db = require('./db');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-app.set('trust proxy', 1);
-app.disable('x-powered-by');
-
-app.use(express.json({ limit: '2mb' }));
+app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true }));
 
-app.use(express.static(
-  path.join(__dirname, 'public')
-));
+app.use(
+  session({
+    secret:
+      process.env.SESSION_SECRET ||
+      'change-this-session-secret',
+    resave: false,
+    saveUninitialized: false,
+    cookie: {
+      httpOnly: true,
+      sameSite: 'lax',
+      secure: process.env.NODE_ENV === 'production'
+    }
+  })
+);
 
-app.use(session({
-  secret:
-    process.env.SESSION_SECRET ||
-    crypto.randomBytes(32).toString('hex'),
+app.use(express.static(path.join(__dirname, 'public')));
 
-  resave: false,
-  saveUninitialized: false,
+/* =========================================================
+   AUTH
+========================================================= */
 
-  cookie: {
-    httpOnly: true,
-    sameSite: 'lax',
-    secure: 'auto',
-    maxAge: 8 * 60 * 60 * 1000
+const ADMIN_USER =
+  process.env.ADMIN_USER || 'admin';
+
+const ADMIN_PASSWORD =
+  process.env.ADMIN_PASSWORD || 'admin123';
+
+function requireAdmin(req, res, next) {
+  if (req.session && req.session.admin) {
+    return next();
   }
-}));
 
-/* =========================================
+  res.status(401).json({
+    error: 'Unauthorized'
+  });
+}
+
+/* =========================================================
    HELPERS
-========================================= */
+========================================================= */
 
 function slugify(value) {
   return String(value || '')
@@ -47,400 +62,158 @@ function slugify(value) {
     .trim()
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/^-+|-+$/g, '')
-    .slice(0, 90);
-}
-
-function safeUrl(value) {
-  return /^https?:\/\//i.test(value || '')
-    ? value
-    : '';
-}
-
-function hash(value) {
-  return crypto
-    .createHash('sha256')
-    .update(String(value || ''))
-    .digest();
-}
-
-function sameSecret(a, b) {
-  try {
-    return crypto.timingSafeEqual(
-      hash(a),
-      hash(b)
-    );
-  } catch {
-    return false;
-  }
-}
-
-function getSetting(name, fallback) {
-  const data = db.getSettings();
-
-  return Object.prototype.hasOwnProperty.call(
-    data,
-    name
-  )
-    ? data[name]
-    : fallback;
-}
-
-function setSettings(values) {
-  return db.saveSettings(values);
-}
-
-function findPrompt(id) {
-  return db
-    .getPrompts()
-    .find(
-      p => String(p.id) === String(id)
-    );
-}
-
-function findPromptBySlug(slug) {
-  return db
-    .getPrompts()
-    .find(
-      p => p.slug === String(slug)
-    );
+    .slice(0, 100);
 }
 
 function uniqueSlug(title) {
-
-  const base =
-    slugify(title) || 'prompt';
-
-  let slug = base;
-  let number = 2;
-
+  const base = slugify(title) || `prompt-${Date.now()}`;
   const prompts = db.getPrompts();
 
-  while (
-    prompts.some(
-      p => p.slug === slug
-    )
-  ) {
-    slug = `${base}-${number++}`;
+  let slug = base;
+  let n = 2;
+
+  while (prompts.some((p) => p.slug === slug)) {
+    slug = `${base}-${n++}`;
   }
 
   return slug;
 }
 
-function createPrompt(data, automatic = false) {
-
-  const title =
-    String(
-      data.title || 'Untitled Prompt'
-    )
-      .trim()
-      .slice(0, 140);
-
-  return {
-    id:
-      data.id ||
-      `${Date.now()}-${crypto
-        .randomBytes(4)
-        .toString('hex')}`,
-
-    slug:
-      data.slug ||
-      uniqueSlug(title),
-
-    title,
-
-    prompt:
-      String(data.prompt || '')
-        .trim()
-        .slice(0, 10000),
-
-    media:
-      data.media || 'Image',
-
-    model:
-      data.model || 'Any',
-
-    category:
-      data.category || 'General',
-
-    imageUrl:
-      safeUrl(data.imageUrl || ''),
-
-    source:
-      data.source ||
-      (automatic
-        ? 'Automatic'
-        : 'Admin'),
-
-    sourceUrl:
-      safeUrl(data.sourceUrl || ''),
-
-    license:
-      data.license || 'Unknown',
-
-    publishedAt:
-      data.publishedAt ||
-      new Date().toISOString(),
-
-    auto:
-      automatic ? 1 : 0
-  };
+function normalizeCategory(value) {
+  return String(value || '')
+    .trim()
+    .toLowerCase();
 }
 
-/* =========================================
-   PROMPT SEARCH
-========================================= */
+/* =========================================================
+   PUBLIC API
+========================================================= */
 
-function searchPrompts(query = {}) {
+app.get('/api/prompts', (req, res) => {
+  const q = String(req.query.q || '')
+    .trim()
+    .toLowerCase();
 
-  let items = db.getPrompts();
+  const media = String(
+    req.query.media || 'all'
+  ).toLowerCase();
 
-  const q =
-    String(query.q || '')
-      .trim()
-      .toLowerCase();
+  const category = String(
+    req.query.category || 'all'
+  ).toLowerCase();
+
+  let prompts = db.getPrompts();
 
   if (q) {
-    items = items.filter(p =>
+    prompts = prompts.filter((p) =>
       [
         p.title,
         p.prompt,
         p.category,
-        p.model,
-        p.media
+        p.media,
+        p.model
       ]
+        .filter(Boolean)
         .join(' ')
         .toLowerCase()
         .includes(q)
     );
   }
 
-  if (
-    query.media &&
-    query.media !== 'all'
-  ) {
-    items = items.filter(
-      p =>
-        String(p.media)
-          .toLowerCase() ===
-        String(query.media)
-          .toLowerCase()
+  if (media !== 'all') {
+    prompts = prompts.filter(
+      (p) =>
+        String(p.media || '').toLowerCase() ===
+        media
     );
   }
 
-  if (
-    query.category &&
-    query.category !== 'all'
-  ) {
-    items = items.filter(
-      p =>
-        String(p.category)
-          .toLowerCase() ===
-        String(query.category)
-          .toLowerCase()
+  if (category !== 'all') {
+    prompts = prompts.filter(
+      (p) =>
+        String(p.category || '').toLowerCase() ===
+        category
     );
   }
 
-  return items.sort(
+  prompts.sort(
     (a, b) =>
-      new Date(b.publishedAt || 0) -
-      new Date(a.publishedAt || 0)
+      new Date(b.createdAt || 0) -
+      new Date(a.createdAt || 0)
   );
-}
 
-/* =========================================
-   PUBLIC PROMPT API
-========================================= */
-
-app.get('/api/prompts', (req, res) => {
-  res.json(
-    searchPrompts(req.query)
-  );
+  res.json(prompts);
 });
 
-app.get(
-  '/api/prompts/:slug',
-  (req, res) => {
+app.get('/api/prompts/:slug', (req, res) => {
+  const prompt = db
+    .getPrompts()
+    .find((p) => p.slug === req.params.slug);
 
-    const prompt =
-      findPromptBySlug(
-        req.params.slug
-      );
-
-    if (!prompt) {
-      return res
-        .status(404)
-        .json({
-          error: 'Prompt not found'
-        });
-    }
-
-    res.json(prompt);
+  if (!prompt) {
+    return res.status(404).json({
+      error: 'Prompt not found'
+    });
   }
-);
+
+  res.json(prompt);
+});
 
 app.get('/api/categories', (req, res) => {
-
-  const categories = {};
-
-  db.getPrompts().forEach(p => {
-
-    const name =
-      p.category || 'General';
-
-    categories[name] =
-      (categories[name] || 0) + 1;
-  });
+  const categories = [
+    ...new Set(
+      db
+        .getPrompts()
+        .map((p) => p.category)
+        .filter(Boolean)
+    )
+  ];
 
   res.json(categories);
 });
 
-/* =========================================
-   PUBLIC COPY-GATE SETTINGS
-========================================= */
-
-app.get(
-  '/api/public/settings',
-  (req, res) => {
-
-    res.json({
-      copyGateSeconds:
-        Number(
-          getSetting(
-            'copyGateSeconds',
-            10
-          )
-        ),
-
-      directLink:
-        safeUrl(
-          getSetting(
-            'directLink',
-            ''
-          )
-        )
-    });
-  }
-);
-
-/* =========================================
-   ADS
-========================================= */
-
-app.get('/api/ads', (req, res) => {
-
-  const ads = db.getAds();
+app.get('/api/public/settings', (req, res) => {
+  const settings = db.getSettings();
 
   res.json({
-    ...ads,
-
-    smart_link:
-      safeUrl(
-        getSetting(
-          'directLink',
-          ''
-        )
-      )
+    copyGateSeconds:
+      Number(settings.copyGateSeconds || 10),
+    directLink:
+      settings.directLink || ''
   });
 });
 
-/* =========================================
-   ADMIN AUTH
-========================================= */
+app.get('/api/ads', (req, res) => {
+  res.json(db.getAds());
+});
 
-function adminOnly(req, res, next) {
-
-  if (req.session?.admin) {
-    return next();
-  }
-
-  res
-    .status(401)
-    .json({
-      error: 'Unauthorized'
-    });
-}
-
-const loginAttempts = new Map();
+/* =========================================================
+   AUTH API
+========================================================= */
 
 app.post('/api/login', (req, res) => {
-
-  const username =
-    process.env.ADMIN_USERNAME ||
-    'admin';
-
-  const password =
-    process.env.ADMIN_PASSWORD;
-
-  if (!password) {
-    return res
-      .status(503)
-      .json({
-        error:
-          'ADMIN_PASSWORD is not configured'
-      });
-  }
-
-  const ip = req.ip;
-
-  const attempt =
-    loginAttempts.get(ip) || {
-      count: 0,
-      time: 0
-    };
+  const {
+    username,
+    password
+  } = req.body || {};
 
   if (
-    attempt.count >= 5 &&
-    Date.now() - attempt.time <
-      15 * 60 * 1000
+    username === ADMIN_USER &&
+    password === ADMIN_PASSWORD
   ) {
-    return res
-      .status(429)
-      .json({
-        error:
-          'Too many login attempts'
-      });
+    req.session.admin = true;
+
+    return res.json({
+      ok: true
+    });
   }
 
-  const valid =
-    sameSecret(
-      req.body?.username,
-      username
-    ) &&
-    sameSecret(
-      req.body?.password,
-      password
-    );
-
-  if (!valid) {
-
-    loginAttempts.set(
-      ip,
-      {
-        count:
-          attempt.count + 1,
-        time: Date.now()
-      }
-    );
-
-    return res
-      .status(401)
-      .json({
-        error:
-          'Invalid username or password'
-      });
-  }
-
-  loginAttempts.delete(ip);
-
-  req.session.admin = true;
-
-  res.json({
-    ok: true
+  res.status(401).json({
+    error: 'Invalid login'
   });
 });
 
 app.post('/api/logout', (req, res) => {
-
   req.session.destroy(() => {
     res.json({
       ok: true
@@ -449,61 +222,56 @@ app.post('/api/logout', (req, res) => {
 });
 
 app.get('/api/admin/me', (req, res) => {
-
   res.json({
     authenticated:
       !!req.session?.admin
   });
 });
 
-/* =========================================
+/* =========================================================
    ADMIN PROMPTS
-========================================= */
-
-app.get(
-  '/api/admin/prompts',
-  adminOnly,
-  (req, res) => {
-
-    res.json(
-      db.getPrompts()
-    );
-  }
-);
+========================================================= */
 
 app.post(
   '/api/admin/prompts',
-  adminOnly,
+  requireAdmin,
   (req, res) => {
+    const body = req.body || {};
 
-    if (
-      !req.body?.title ||
-      !req.body?.prompt
-    ) {
-      return res
-        .status(400)
-        .json({
-          error:
-            'Title and prompt are required'
-        });
+    if (!body.title || !body.prompt) {
+      return res.status(400).json({
+        error: 'Title and prompt are required'
+      });
     }
 
-    const prompt =
-      createPrompt(req.body);
+    const prompt = {
+      title: body.title,
+      prompt: body.prompt,
+      imageUrl: body.imageUrl || '',
+      media: body.media || 'Image',
+      model: body.model || 'Manual',
+      category: body.category || 'General',
+      source: body.source || 'PromptForge',
+      slug: uniqueSlug(body.title)
+    };
 
-    db.addPrompt(prompt);
+    const data = db.addPrompt(prompt);
 
-    res.json(prompt);
+    res.json({
+      ok: true,
+      prompt:
+        data.prompts[data.prompts.length - 1]
+    });
   }
 );
 
-app.delete(
+app.put(
   '/api/admin/prompts/:id',
-  adminOnly,
+  requireAdmin,
   (req, res) => {
-
-    db.deletePrompt(
-      req.params.id
+    db.updatePrompt(
+      req.params.id,
+      req.body || {}
     );
 
     res.json({
@@ -512,11 +280,23 @@ app.delete(
   }
 );
 
-/* =========================================
-   UNLIMITED API PROVIDERS
-========================================= */
+app.delete(
+  '/api/admin/prompts/:id',
+  requireAdmin,
+  (req, res) => {
+    db.deletePrompt(req.params.id);
 
-const VALID_CATEGORIES = [
+    res.json({
+      ok: true
+    });
+  }
+);
+
+/* =========================================================
+   API PROVIDERS
+========================================================= */
+
+const ALLOWED_PROVIDER_CATEGORIES = [
   'prompt_generate',
   'photo_generate',
   'trending_search'
@@ -524,30 +304,24 @@ const VALID_CATEGORIES = [
 
 app.get(
   '/api/admin/providers',
-  adminOnly,
+  requireAdmin,
   (req, res) => {
-
     const providers =
-      db.getApiProviders();
-
-    res.json(
-      providers.map(p => ({
+      db.getApiProviders().map((p) => ({
         ...p,
+        apiKey: p.apiKey
+          ? '••••••••••••'
+          : ''
+      }));
 
-        apiKey:
-          p.apiKey
-            ? '••••••••'
-            : ''
-      }))
-    );
+    res.json(providers);
   }
 );
 
 app.post(
   '/api/admin/providers',
-  adminOnly,
+  requireAdmin,
   (req, res) => {
-
     const {
       category,
       providerName,
@@ -555,74 +329,49 @@ app.post(
     } = req.body || {};
 
     if (
-      !VALID_CATEGORIES.includes(
+      !ALLOWED_PROVIDER_CATEGORIES.includes(
         category
       )
     ) {
-      return res
-        .status(400)
-        .json({
-          error:
-            'Invalid category'
-        });
+      return res.status(400).json({
+        error: 'Invalid provider category'
+      });
     }
 
     if (!providerName) {
-      return res
-        .status(400)
-        .json({
-          error:
-            'Provider name is required'
-        });
+      return res.status(400).json({
+        error: 'Provider name is required'
+      });
     }
 
-    const provider =
-      db.addApiProvider({
-        category,
-        providerName,
-        apiKey: apiKey || '',
-        enabled: true
-      });
+    const result = db.addApiProvider({
+      category,
+      providerName,
+      apiKey: apiKey || '',
+      enabled: true
+    });
 
     res.json({
       ok: true,
-      provider
+      provider:
+        result.apiProviders[
+          result.apiProviders.length - 1
+        ]
     });
   }
 );
 
 app.put(
   '/api/admin/providers/:id',
-  adminOnly,
+  requireAdmin,
   (req, res) => {
-
-    const providers =
-      db.getApiProviders();
-
-    const old =
-      providers.find(
-        p =>
-          String(p.id) ===
-          String(req.params.id)
-      );
-
-    if (!old) {
-      return res
-        .status(404)
-        .json({
-          error:
-            'Provider not found'
-        });
-    }
-
     const changes = {
       ...req.body
     };
 
     if (
       !changes.apiKey ||
-      changes.apiKey ===
-        '••••••••'
+      changes.apiKey === '••••••••••••'
     ) {
       delete changes.apiKey;
     }
@@ -640,12 +389,9 @@ app.put(
 
 app.delete(
   '/api/admin/providers/:id',
-  adminOnly,
+  requireAdmin,
   (req, res) => {
-
-    db.deleteApiProvider(
-      req.params.id
-    );
+    db.deleteApiProvider(req.params.id);
 
     res.json({
       ok: true
@@ -653,784 +399,575 @@ app.delete(
   }
 );
 
-/* =========================================
+/* =========================================================
    ADMIN SETTINGS
-========================================= */
+========================================================= */
 
 app.get(
   '/api/admin/settings',
-  adminOnly,
+  requireAdmin,
   (req, res) => {
+    res.json(db.getSettings());
+  }
+);
+
+app.put(
+  '/api/admin/settings',
+  requireAdmin,
+  (req, res) => {
+    const body = req.body || {};
+
+    const current = db.getSettings();
+
+    const interval = Math.max(
+      1,
+      Math.min(
+        1440,
+        Number(
+          body.postIntervalMinutes ??
+          current.postIntervalMinutes ??
+          60
+        )
+      )
+    );
+
+    const postsPerRun = Math.max(
+      1,
+      Math.min(
+        20,
+        Number(
+          body.postsPerRun ??
+          current.postsPerRun ??
+          1
+        )
+      )
+    );
+
+    db.saveSettings({
+      ...body,
+      postIntervalMinutes: interval,
+      postsPerRun,
+      autoPost:
+        body.autoPost !== false
+    });
+
+    restartAutoPosting();
 
     res.json({
-      autoPostEnabled:
-        getSetting(
-          'autoPostEnabled',
-          true
-        ),
-
-      cron:
-        getSetting(
-          'cron',
-          '0 */6 * * *'
-        ),
-
-      copyGateSeconds:
-        getSetting(
-          'copyGateSeconds',
-          10
-        ),
-
-      directLink:
-        getSetting(
-          'directLink',
-          ''
-        )
+      ok: true,
+      settings: db.getSettings()
     });
   }
 );
 
-app.post(
-  '/api/admin/settings',
-  adminOnly,
-  (req, res) => {
+/* =========================================================
+   ADS MANAGER
+========================================================= */
 
-    const seconds =
-      Math.max(
-        0,
+app.get(
+  '/api/admin/ads',
+  requireAdmin,
+  (req, res) => {
+    res.json(db.getAds());
+  }
+);
+
+app.put(
+  '/api/admin/ads',
+  requireAdmin,
+  (req, res) => {
+    db.saveAds(req.body || {});
+
+    res.json({
+      ok: true,
+      ads: db.getAds()
+    });
+  }
+);
+
+/* =========================================================
+   OPENAI
+========================================================= */
+
+function getOpenAIProvider() {
+  const providers =
+    db.getApiProviders();
+
+  return providers.find(
+    (p) =>
+      p.enabled !== false &&
+      normalizeCategory(p.category) ===
+        'prompt_generate' &&
+      String(p.providerName || '')
+        .toLowerCase()
+        .includes('openai') &&
+      p.apiKey
+  );
+}
+
+async function createOpenAIClient() {
+  const provider =
+    getOpenAIProvider();
+
+  if (!provider) {
+    throw new Error(
+      'OpenAI API provider is not configured'
+    );
+  }
+
+  return new OpenAI({
+    apiKey: provider.apiKey
+  });
+}
+
+/* =========================================================
+   TRENDING TOPIC
+========================================================= */
+
+async function getTrendingTopic() {
+  const response = await fetch(
+    'https://news.google.com/rss?hl=en-US&gl=US&ceid=US:en'
+  );
+
+  if (!response.ok) {
+    throw new Error(
+      'Trending source failed'
+    );
+  }
+
+  const xml = await response.text();
+
+  const titles = [
+    ...xml.matchAll(
+      /<title>(.*?)<\/title>/g
+    )
+  ]
+    .map((m) =>
+      m[1]
+        .replace(/<!\[CDATA\[(.*?)\]\]>/g, '$1')
+        .trim()
+    )
+    .filter(
+      (x) =>
+        x &&
+        x.toLowerCase() !==
+          'google news'
+    );
+
+  if (!titles.length) {
+    throw new Error(
+      'No trending topic found'
+    );
+  }
+
+  const existingTitles = new Set(
+    db
+      .getPrompts()
+      .map((p) =>
+        String(p.title || '')
+          .toLowerCase()
+      )
+  );
+
+  const fresh =
+    titles.find(
+      (title) =>
+        !existingTitles.has(
+          title.toLowerCase()
+        )
+    ) || titles[0];
+
+  return fresh;
+}
+
+/* =========================================================
+   OPENAI PROMPT
+========================================================= */
+
+async function generatePrompt(topic) {
+  const client =
+    await createOpenAIClient();
+
+  const response =
+    await client.responses.create({
+      model:
+        process.env.OPENAI_TEXT_MODEL ||
+        'gpt-5',
+      input: [
+        {
+          role: 'system',
+          content:
+            'You create high-quality prompts for AI image generation.'
+        },
+        {
+          role: 'user',
+          content: `
+Create ONE premium image-generation prompt based on this current topic:
+
+${topic}
+
+Requirements:
+- cinematic
+- highly detailed
+- realistic
+- professional composition
+- atmospheric depth
+- beautiful lighting
+- strong subject
+- suitable for a public prompt website
+- do not mention politics unless the topic itself requires it
+- return ONLY the final image prompt
+          `
+        }
+      ]
+    });
+
+  const prompt =
+    response.output_text?.trim();
+
+  if (!prompt) {
+    throw new Error(
+      'OpenAI prompt generation returned empty text'
+    );
+  }
+
+  return prompt;
+}
+
+/* =========================================================
+   OPENAI IMAGE
+========================================================= */
+
+async function generateImage(prompt) {
+  const client =
+    await createOpenAIClient();
+
+  const result =
+    await client.images.generate({
+      model:
+        process.env.OPENAI_IMAGE_MODEL ||
+        'gpt-image-1',
+      prompt,
+      size:
+        process.env.OPENAI_IMAGE_SIZE ||
+        '1024x1024'
+    });
+
+  const image =
+    result.data?.[0];
+
+  if (!image) {
+    throw new Error(
+      'OpenAI image generation returned no image'
+    );
+  }
+
+  if (image.b64_json) {
+    const imageDir =
+      process.env.IMAGE_DATA_DIR ||
+      path.join(
+        process.env.DATA_DIR ||
+          path.join(__dirname, 'data'),
+        'generated'
+      );
+
+    fs.mkdirSync(imageDir, {
+      recursive: true
+    });
+
+    const filename =
+      `${Date.now()}-${Math.random()
+        .toString(36)
+        .slice(2, 8)}.png`;
+
+    const filepath =
+      path.join(
+        imageDir,
+        filename
+      );
+
+    fs.writeFileSync(
+      filepath,
+      Buffer.from(
+        image.b64_json,
+        'base64'
+      )
+    );
+
+    return `/generated/${filename}`;
+  }
+
+  if (image.url) {
+    return image.url;
+  }
+
+  throw new Error(
+    'OpenAI image response contains no usable image'
+  );
+}
+
+/* =========================================================
+   AUTOMATIC POST
+========================================================= */
+
+let posting = false;
+
+async function createAutomaticPost() {
+  if (posting) {
+    return {
+      skipped: true,
+      reason:
+        'Another automatic post is running'
+    };
+  }
+
+  posting = true;
+
+  try {
+    const settings =
+      db.getSettings();
+
+    if (settings.autoPost === false) {
+      return {
+        skipped: true,
+        reason:
+          'Automatic posting disabled'
+      };
+    }
+
+    const topic =
+      await getTrendingTopic();
+
+    const prompt =
+      await generatePrompt(topic);
+
+    /*
+      Important:
+      Image is generated from the EXACT prompt
+      that will be published with the image.
+    */
+    const imageUrl =
+      await generateImage(prompt);
+
+    const title =
+      topic.length > 140
+        ? `${topic.slice(0, 137)}...`
+        : topic;
+
+    const duplicate =
+      db
+        .getPrompts()
+        .some(
+          (p) =>
+            String(p.prompt || '')
+              .trim()
+              .toLowerCase() ===
+            prompt
+              .trim()
+              .toLowerCase()
+        );
+
+    if (duplicate) {
+      return {
+        skipped: true,
+        reason:
+          'Duplicate prompt'
+      };
+    }
+
+    const item = {
+      title,
+      prompt,
+      imageUrl,
+      media: 'Image',
+      model: 'OpenAI',
+      category: 'Trending',
+      source: 'OpenAI',
+      slug: uniqueSlug(title)
+    };
+
+    db.addPrompt(item);
+
+    return {
+      ok: true,
+      post: item
+    };
+  } finally {
+    posting = false;
+  }
+}
+
+/* =========================================================
+   MANUAL RUN NOW
+========================================================= */
+
+app.post(
+  '/api/admin/auto-post/run',
+  requireAdmin,
+  async (req, res) => {
+    try {
+      const result =
+        await createAutomaticPost();
+
+      res.json(result);
+    } catch (error) {
+      console.error(
+        'Automatic post error:',
+        error
+      );
+
+      res.status(500).json({
+        error:
+          error.message ||
+          'Automatic post failed'
+      });
+    }
+  }
+);
+
+/* =========================================================
+   CRON
+========================================================= */
+
+let cronTask = null;
+
+function buildCronExpression(minutes) {
+  const m = Math.max(
+    1,
+    Math.min(
+      1440,
+      Number(minutes || 60)
+    )
+  );
+
+  if (m < 60) {
+    return `*/${m} * * * *`;
+  }
+
+  if (m === 60) {
+    return '0 * * * *';
+  }
+
+  if (m % 60 === 0) {
+    return `0 */${m / 60} * * *`;
+  }
+
+  /*
+    For non-hour intervals above 60 minutes,
+    use the closest supported hourly schedule.
+    Admin values under 60 minutes are exact.
+  */
+  return `0 * * * *`;
+}
+
+function restartAutoPosting() {
+  if (cronTask) {
+    cronTask.stop();
+    cronTask = null;
+  }
+
+  const settings =
+    db.getSettings();
+
+  if (settings.autoPost === false) {
+    console.log(
+      'Automatic posting disabled'
+    );
+    return;
+  }
+
+  const expression =
+    buildCronExpression(
+      settings.postIntervalMinutes ||
+        60
+    );
+
+  cronTask = cron.schedule(
+    expression,
+    async () => {
+      const latest =
+        db.getSettings();
+
+      const amount = Math.max(
+        1,
         Math.min(
-          120,
+          20,
           Number(
-            req.body.copyGateSeconds ||
-            10
+            latest.postsPerRun || 1
           )
         )
       );
 
-    setSettings({
-      autoPostEnabled:
-        !!req.body.autoPostEnabled,
-
-      cron:
-        req.body.cron ||
-        '0 */6 * * *',
-
-      copyGateSeconds:
-        seconds,
-
-      directLink:
-        safeUrl(
-          req.body.directLink ||
-          ''
-        )
-    });
-
-    scheduleAutomaticPosting();
-
-    res.json({
-      ok: true
-    });
-  }
-);
-
-/* =========================================
-   ADMIN ADS
-========================================= */
-
-app.get(
-  '/api/admin/ads',
-  adminOnly,
-  (req, res) => {
-
-    res.json(
-      db.getAds()
-    );
-  }
-);
-
-app.post(
-  '/api/admin/ads',
-  adminOnly,
-  (req, res) => {
-
-    db.saveAds(
-      req.body || {}
-    );
-
-    res.json({
-      ok: true
-    });
-  }
-);
-
-/* =========================================
-   BUILT-IN API PROVIDERS
-========================================= */
-
-function providerKey(name) {
-
-  return String(name || '')
-    .toLowerCase()
-    .replace(/[\s_-]+/g, '');
-}
-
-/* ---------- Trending ---------- */
-
-async function googleNewsWorldwide() {
-
-  const url =
-    'https://news.google.com/rss?hl=en-US&gl=US&ceid=US:en';
-
-  const response =
-    await fetch(
-      url,
-      {
-        signal:
-          AbortSignal.timeout(15000)
-      }
-    );
-
-  if (!response.ok) {
-    throw new Error(
-      'Google News unavailable'
-    );
-  }
-
-  const xml =
-    await response.text();
-
-  const titles = [];
-
-  const matches =
-    xml.matchAll(
-      /<title>(.*?)<\/title>/g
-    );
-
-  for (const match of matches) {
-
-    const title =
-      match[1]
-        .replace(
-          /<!\[CDATA\[(.*?)\]\]>/g,
-          '$1'
-        )
-        .replace(
-          /&amp;/g,
-          '&'
-        )
-        .trim();
-
-    if (
-      title &&
-      title !== 'Google News'
-    ) {
-      titles.push(title);
-    }
-  }
-
-  return titles.slice(0, 20);
-}
-
-/* ---------- Photos ---------- */
-
-async function pexelsSearch(
-  apiKey,
-  topic
-) {
-
-  const url =
-    'https://api.pexels.com/v1/search?' +
-    new URLSearchParams({
-      query: topic,
-      per_page: '1'
-    });
-
-  const response =
-    await fetch(
-      url,
-      {
-        headers: {
-          Authorization: apiKey
-        },
-        signal:
-          AbortSignal.timeout(15000)
-      }
-    );
-
-  if (!response.ok) {
-    throw new Error(
-      `Pexels HTTP ${response.status}`
-    );
-  }
-
-  const data =
-    await response.json();
-
-  return (
-    data.photos?.[0]?.src?.large2x ||
-    data.photos?.[0]?.src?.large ||
-    ''
-  );
-}
-
-async function unsplashSearch(
-  apiKey,
-  topic
-) {
-
-  const url =
-    'https://api.unsplash.com/search/photos?' +
-    new URLSearchParams({
-      query: topic,
-      per_page: '1'
-    });
-
-  const response =
-    await fetch(
-      url,
-      {
-        headers: {
-          Authorization:
-            `Client-ID ${apiKey}`
-        },
-        signal:
-          AbortSignal.timeout(15000)
-      }
-    );
-
-  if (!response.ok) {
-    throw new Error(
-      `Unsplash HTTP ${response.status}`
-    );
-  }
-
-  const data =
-    await response.json();
-
-  return (
-    data.results?.[0]?.urls?.regular ||
-    ''
-  );
-}
-
-/* ---------- Prompt AI ---------- */
-
-async function geminiPrompt(
-  apiKey,
-  topic
-) {
-
-  const url =
-    'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=' +
-    encodeURIComponent(apiKey);
-
-  const response =
-    await fetch(
-      url,
-      {
-        method: 'POST',
-
-        headers: {
-          'Content-Type':
-            'application/json'
-        },
-
-        body: JSON.stringify({
-          contents: [{
-            parts: [{
-              text:
-                `Create one high quality AI image prompt about "${topic}". Return only the prompt text. Include subject, composition, lighting, camera, atmosphere, colors and detail.`
-            }]
-          }]
-        }),
-
-        signal:
-          AbortSignal.timeout(20000)
-      }
-    );
-
-  if (!response.ok) {
-    throw new Error(
-      `Gemini HTTP ${response.status}`
-    );
-  }
-
-  const data =
-    await response.json();
-
-  return (
-    data
-      .candidates?.[0]
-      ?.content?.parts?.[0]
-      ?.text
-      ?.trim() ||
-    ''
-  );
-}
-
-async function groqPrompt(
-  apiKey,
-  topic
-) {
-
-  const response =
-    await fetch(
-      'https://api.groq.com/openai/v1/chat/completions',
-      {
-        method: 'POST',
-
-        headers: {
-          Authorization:
-            `Bearer ${apiKey}`,
-
-          'Content-Type':
-            'application/json'
-        },
-
-        body: JSON.stringify({
-          model:
-            'llama-3.1-8b-instant',
-
-          messages: [{
-            role: 'user',
-
-            content:
-              `Create one detailed AI image prompt about "${topic}". Return only the prompt.`
-          }],
-
-          temperature: 0.8
-        }),
-
-        signal:
-          AbortSignal.timeout(20000)
-      }
-    );
-
-  if (!response.ok) {
-    throw new Error(
-      `Groq HTTP ${response.status}`
-    );
-  }
-
-  const data =
-    await response.json();
-
-  return (
-    data.choices?.[0]
-      ?.message?.content
-      ?.trim() ||
-    ''
-  );
-}
-
-/* =========================================
-   TRENDING PROVIDER FALLBACK
-========================================= */
-
-async function getTrendingTopics() {
-
-  const providers =
-    db.getApiProviders()
-      .filter(
-        p =>
-          p.category ===
-            'trending_search' &&
-          p.enabled !== false
-      );
-
-  /*
-    If no trending API is configured,
-    use Google News RSS automatically.
-  */
-
-  try {
-
-    const topics =
-      await googleNewsWorldwide();
-
-    if (topics.length) {
-      return topics;
-    }
-
-  } catch (error) {
-
-    console.log(
-      'Trending fallback:',
-      error.message
-    );
-  }
-
-  return [];
-}
-
-/* =========================================
-   PROMPT GENERATOR FALLBACK
-========================================= */
-
-async function generatePrompt(topic) {
-
-  const providers =
-    db.getApiProviders()
-      .filter(
-        p =>
-          p.category ===
-            'prompt_generate' &&
-          p.enabled !== false
-      );
-
-  for (const provider of providers) {
-
-    try {
-
-      const name =
-        providerKey(
-          provider.providerName
-        );
-
-      if (
-        name === 'gemini' ||
-        name === 'googlegemini'
+      for (
+        let i = 0;
+        i < amount;
+        i++
       ) {
-
-        const result =
-          await geminiPrompt(
-            provider.apiKey,
-            topic
+        try {
+          await createAutomaticPost();
+        } catch (error) {
+          console.error(
+            'Scheduled post failed:',
+            error.message
           );
-
-        if (result) {
-          return result;
         }
       }
-
-      if (name === 'groq') {
-
-        const result =
-          await groqPrompt(
-            provider.apiKey,
-            topic
-          );
-
-        if (result) {
-          return result;
-        }
-      }
-
-    } catch (error) {
-
-      console.log(
-        `${provider.providerName} failed:`,
-        error.message
-      );
     }
-  }
+  );
 
-  /*
-    No AI API? Generate a local prompt.
-    This means automatic posting can still
-    continue without an AI API.
-  */
-
-  return (
-    `Create a premium, highly detailed AI image ` +
-    `based on "${topic}". Include a strong subject, ` +
-    `professional composition, cinematic lighting, ` +
-    `realistic textures, atmospheric depth, ` +
-    `beautiful color grading, sharp details, ` +
-    `professional photography and high quality.`
+  console.log(
+    `Automatic posting scheduled: ${expression}`
   );
 }
 
-/* =========================================
-   PHOTO GENERATOR / SEARCH
-========================================= */
-
-async function generatePhoto(topic) {
-
-  const providers =
-    db.getApiProviders()
-      .filter(
-        p =>
-          p.category ===
-            'photo_generate' &&
-          p.enabled !== false
-      );
-
-  for (const provider of providers) {
-
-    try {
-
-      const name =
-        providerKey(
-          provider.providerName
-        );
-
-      if (
-        name === 'pexels'
-      ) {
-
-        const result =
-          await pexelsSearch(
-            provider.apiKey,
-            topic
-          );
-
-        if (result) {
-          return result;
-        }
-      }
-
-      if (
-        name === 'unsplash'
-      ) {
-
-        const result =
-          await unsplashSearch(
-            provider.apiKey,
-            topic
-          );
-
-        if (result) {
-          return result;
-        }
-      }
-
-    } catch (error) {
-
-      console.log(
-        `${provider.providerName} failed:`,
-        error.message
-      );
-    }
-  }
-
-  return '';
-}
-
-/* =========================================
-   AUTOMATIC POSTING
-========================================= */
-
-let running = false;
-
-async function automaticPost() {
-
-  if (running) {
-    return {
-      added: 0,
-      reason:
-        'Already running'
-    };
-  }
-
-  if (
-    !getSetting(
-      'autoPostEnabled',
-      true
-    )
-  ) {
-    return {
-      added: 0,
-      reason:
-        'Automatic posting disabled'
-    };
-  }
-
-  running = true;
-
-  let added = 0;
-
-  try {
-
-    const topics =
-      await getTrendingTopics();
-
-    const existing =
-      db.getPrompts();
-
-    const existingTitles =
-      new Set(
-        existing.map(
-          p =>
-            String(
-              p.title
-            ).toLowerCase()
-        )
-      );
-
-    /*
-      Up to 15 posts per run.
-    */
-
-    for (
-      const topic of
-      topics.slice(0, 15)
-    ) {
-
-      if (
-        existingTitles.has(
-          String(topic)
-            .toLowerCase()
-        )
-      ) {
-        continue;
-      }
-
-      const prompt =
-        await generatePrompt(
-          topic
-        );
-
-      const imageUrl =
-        await generatePhoto(
-          topic
-        );
-
-      const item =
-        createPrompt(
-          {
-            title: topic,
-            prompt,
-            imageUrl,
-            media: 'Image',
-            model: 'Auto',
-            category: 'Trending',
-            source:
-              'Automatic',
-            license:
-              'Provider terms'
-          },
-          true
-        );
-
-      db.addPrompt(item);
-
-      existingTitles.add(
-        String(topic)
-          .toLowerCase()
-      );
-
-      added++;
-    }
-
-    return {
-      added,
-      topics:
-        topics.length
-    };
-
-  } finally {
-
-    running = false;
-  }
-}
-
-/* =========================================
-   ADMIN RUN NOW
-========================================= */
-
-app.post(
-  '/api/admin/collect',
-  adminOnly,
-  async (req, res) => {
-
-    try {
-
-      const result =
-        await automaticPost();
-
-      res.json(result);
-
-    } catch (error) {
-
-      console.error(error);
-
-      res
-        .status(500)
-        .json({
-          error:
-            'Automatic posting failed'
-        });
-    }
-  }
-);
-
-/* =========================================
-   CRON
-========================================= */
-
-let cronJob = null;
-
-function scheduleAutomaticPosting() {
-
-  if (cronJob) {
-    cronJob.stop();
-    cronJob = null;
-  }
-
-  const expression =
-    getSetting(
-      'cron',
-      '0 */6 * * *'
-    );
-
-  if (
-    cron.validate(
-      expression
-    )
-  ) {
-
-    cronJob =
-      cron.schedule(
-        expression,
-        () => {
-
-          automaticPost()
-            .then(result =>
-              console.log(
-                'Automatic posting:',
-                result
-              )
-            )
-            .catch(error =>
-              console.error(
-                'Automatic posting error:',
-                error
-              )
-            );
-        }
-      );
-  }
-}
-
-/* =========================================
+/* =========================================================
    HEALTH
-========================================= */
+========================================================= */
 
+app.get('/health', (req, res) => {
+  res.json({
+    ok: true,
+    service: 'PromptForge',
+    automaticPosting:
+      db.getSettings().autoPost !== false
+  });
+});
+
+/* =========================================================
+   SPA / ADMIN FALLBACK
+========================================================= */
+
+app.get('/p/:slug', (req, res) => {
+  res.sendFile(
+    path.join(
+      __dirname,
+      'public',
+      'index.html'
+    )
+  );
+});
+
+app.get('/admin', (req, res) => {
+  res.sendFile(
+    path.join(
+      __dirname,
+      'public',
+      'admin.html'
+    )
+  );
+});
+
+/*
+  Express 5 SPA fallback
+*/
 app.get(
-  '/health',
+  /^(?!\/api\/).*/,
   (req, res) => {
-
-    res.json({
-      ok: true,
-      service:
-        'PromptForge',
-      automaticPosting:
-        getSetting(
-          'autoPostEnabled',
-          true
-        )
-    });
-  }
-);
-
-/* =========================================
-   SPA FALLBACK
-========================================= */
-
-app.get(
-  '*splat',
-  (req, res) => {
+    if (
+      req.path.startsWith('/generated/')
+    ) {
+      return res.status(404).end();
+    }
 
     res.sendFile(
       path.join(
@@ -1442,18 +979,14 @@ app.get(
   }
 );
 
-/* =========================================
+/* =========================================================
    START
-========================================= */
+========================================================= */
 
-scheduleAutomaticPosting();
+app.listen(PORT, () => {
+  console.log(
+    `PromptForge running on port ${PORT}`
+  );
 
-app.listen(
-  PORT,
-  () => {
-
-    console.log(
-      `PromptForge running on port ${PORT}`
-    );
-  }
-);
+  restartAutoPosting();
+});
