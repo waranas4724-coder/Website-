@@ -1,79 +1,75 @@
-const fs = require('fs');
-const path = require('path');
+const fs = require("fs");
+const path = require("path");
 
 const DATA_DIR =
   process.env.DATA_DIR ||
-  path.join(__dirname, 'data');
+  path.join(__dirname, "data");
+
+const DB_FILE =
+  path.join(DATA_DIR, "promptforge.json");
 
 fs.mkdirSync(DATA_DIR, {
   recursive: true
 });
 
-const DB_FILE = path.join(
-  DATA_DIR,
-  'promptforge.json'
-);
-
-const defaultData = {
+const DEFAULT_DB = {
   prompts: [],
 
   apiProviders: [],
 
   settings: {
     autoPost: true,
-
-    // Default: 1 post every 60 minutes
     postIntervalMinutes: 60,
-
-    // Default: 1 post per run
     postsPerRun: 1,
-
     copyGateSeconds: 10,
-
-    directLink: ''
+    directLink: ""
   },
 
   ads: {}
 };
 
-function cloneDefault() {
+function clone(value) {
   return JSON.parse(
-    JSON.stringify(defaultData)
+    JSON.stringify(value)
   );
 }
 
-function load() {
+function ensureDatabase() {
+  if (!fs.existsSync(DB_FILE)) {
+    fs.writeFileSync(
+      DB_FILE,
+      JSON.stringify(
+        DEFAULT_DB,
+        null,
+        2
+      ),
+      "utf8"
+    );
+
+    return;
+  }
+
   try {
-    if (!fs.existsSync(DB_FILE)) {
-      fs.writeFileSync(
-        DB_FILE,
-        JSON.stringify(
-          defaultData,
-          null,
-          2
-        )
-      );
-
-      return cloneDefault();
-    }
-
     const raw =
       fs.readFileSync(
         DB_FILE,
-        'utf8'
+        "utf8"
       );
 
     const data =
       JSON.parse(raw);
 
-    return {
-      ...cloneDefault(),
+    const merged = {
+      ...DEFAULT_DB,
       ...data,
 
       settings: {
-        ...defaultData.settings,
+        ...DEFAULT_DB.settings,
         ...(data.settings || {})
       },
+
+      ads:
+        data.ads || {},
 
       prompts:
         Array.isArray(data.prompts)
@@ -85,22 +81,75 @@ function load() {
           data.apiProviders
         )
           ? data.apiProviders
-          : [],
-
-      ads:
-        data.ads || {}
+          : []
     };
+
+    fs.writeFileSync(
+      DB_FILE,
+      JSON.stringify(
+        merged,
+        null,
+        2
+      ),
+      "utf8"
+    );
   } catch (error) {
     console.error(
-      'Database read error:',
+      "Database read error:",
       error
     );
 
-    return cloneDefault();
+    /*
+     * Don't destroy the old database.
+     * Create a backup before recovering.
+     */
+    const backup =
+      `${DB_FILE}.broken-${Date.now()}`;
+
+    try {
+      fs.copyFileSync(
+        DB_FILE,
+        backup
+      );
+    } catch (_) {}
+
+    fs.writeFileSync(
+      DB_FILE,
+      JSON.stringify(
+        DEFAULT_DB,
+        null,
+        2
+      ),
+      "utf8"
+    );
   }
 }
 
-function save(data) {
+function readDB() {
+  ensureDatabase();
+
+  try {
+    return JSON.parse(
+      fs.readFileSync(
+        DB_FILE,
+        "utf8"
+      )
+    );
+  } catch (error) {
+    console.error(
+      "Database load failed:",
+      error
+    );
+
+    return clone(
+      DEFAULT_DB
+    );
+  }
+}
+
+function writeDB(data) {
+  ensureDatabase();
+
   const tempFile =
     `${DB_FILE}.tmp`;
 
@@ -110,223 +159,300 @@ function save(data) {
       data,
       null,
       2
-    )
+    ),
+    "utf8"
   );
 
   fs.renameSync(
     tempFile,
     DB_FILE
   );
-
-  return data;
 }
 
-function getData() {
-  return load();
-}
-
-function updateData(callback) {
-  const data = load();
-
-  const result =
-    callback(data) || data;
-
-  return save(result);
-}
-
-/* =========================================================
-   PROMPTS
-========================================================= */
+/*
+|--------------------------------------------------------------------------
+| Prompts
+|--------------------------------------------------------------------------
+*/
 
 function getPrompts() {
-  return load().prompts;
+  const db = readDB();
+
+  return Array.isArray(
+    db.prompts
+  )
+    ? db.prompts
+    : [];
 }
 
 function addPrompt(prompt) {
-  return updateData((data) => {
-    data.prompts.push({
-      id:
-        prompt.id ||
-        `${Date.now()}-${Math.random()
-          .toString(36)
-          .slice(2, 8)}`,
+  const db = readDB();
 
-      createdAt:
-        prompt.createdAt ||
-        new Date().toISOString(),
+  if (!Array.isArray(db.prompts)) {
+    db.prompts = [];
+  }
 
-      ...prompt
-    });
+  db.prompts.unshift(
+    prompt
+  );
 
-    return data;
-  });
+  writeDB(db);
+
+  return prompt;
 }
 
 function updatePrompt(
   id,
   changes
 ) {
-  return updateData((data) => {
-    const index =
-      data.prompts.findIndex(
-        (p) =>
-          String(p.id) ===
-          String(id)
-      );
+  const db = readDB();
 
-    if (index !== -1) {
-      data.prompts[index] = {
-        ...data.prompts[index],
-        ...changes
-      };
-    }
+  const index =
+    db.prompts.findIndex(
+      (item) =>
+        String(item.id) ===
+        String(id)
+    );
 
-    return data;
-  });
+  if (index === -1) {
+    return null;
+  }
+
+  db.prompts[index] = {
+    ...db.prompts[index],
+    ...changes
+  };
+
+  writeDB(db);
+
+  return db.prompts[index];
 }
 
 function deletePrompt(id) {
-  return updateData((data) => {
-    data.prompts =
-      data.prompts.filter(
-        (p) =>
-          String(p.id) !==
-          String(id)
-      );
+  const db = readDB();
 
-    return data;
-  });
+  db.prompts =
+    db.prompts.filter(
+      (item) =>
+        String(item.id) !==
+        String(id)
+    );
+
+  writeDB(db);
+
+  return true;
 }
 
-/* =========================================================
-   API PROVIDERS
-========================================================= */
+/*
+|--------------------------------------------------------------------------
+| API Providers
+|--------------------------------------------------------------------------
+|
+| Categories:
+|
+| trending_search
+| prompt_generate
+| photo_generate
+|--------------------------------------------------------------------------
+*/
 
 function getApiProviders() {
-  return load().apiProviders;
+  const db = readDB();
+
+  return Array.isArray(
+    db.apiProviders
+  )
+    ? db.apiProviders
+    : [];
 }
 
 function addApiProvider(
   provider
 ) {
-  return updateData((data) => {
-    data.apiProviders.push({
-      id:
-        provider.id ||
-        `${Date.now()}-${Math.random()
-          .toString(36)
-          .slice(2, 8)}`,
+  const db = readDB();
 
-      category:
-        provider.category ||
-        'prompt_generate',
+  if (
+    !Array.isArray(
+      db.apiProviders
+    )
+  ) {
+    db.apiProviders = [];
+  }
 
-      providerName:
-        provider.providerName ||
-        '',
+  const item = {
+    id:
+      Date.now().toString(36) +
+      Math.random()
+        .toString(36)
+        .slice(2, 8),
 
-      apiKey:
-        provider.apiKey ||
-        '',
+    category:
+      provider.category ||
+      "prompt_generate",
 
-      enabled:
-        provider.enabled !== false,
+    providerName:
+      provider.providerName ||
+      "Provider",
 
-      createdAt:
-        new Date().toISOString(),
+    apiKey:
+      provider.apiKey ||
+      "",
 
-      ...provider
-    });
+    enabled:
+      provider.enabled !== false,
 
-    return data;
-  });
+    createdAt:
+      new Date().toISOString()
+  };
+
+  db.apiProviders.push(
+    item
+  );
+
+  writeDB(db);
+
+  return item;
 }
 
 function updateApiProvider(
   id,
   changes
 ) {
-  return updateData((data) => {
-    const index =
-      data.apiProviders.findIndex(
-        (p) =>
-          String(p.id) ===
-          String(id)
-      );
+  const db = readDB();
 
-    if (index !== -1) {
-      data.apiProviders[index] = {
-        ...data.apiProviders[index],
-        ...changes
-      };
-    }
+  const index =
+    db.apiProviders.findIndex(
+      (item) =>
+        String(item.id) ===
+        String(id)
+    );
 
-    return data;
-  });
+  if (index === -1) {
+    return null;
+  }
+
+  /*
+   * Don't accidentally replace an API key
+   * with an empty value.
+   */
+  if (
+    changes.apiKey ===
+      undefined ||
+    changes.apiKey === ""
+  ) {
+    delete changes.apiKey;
+  }
+
+  db.apiProviders[index] = {
+    ...db.apiProviders[index],
+    ...changes,
+    updatedAt:
+      new Date().toISOString()
+  };
+
+  writeDB(db);
+
+  return db.apiProviders[index];
 }
 
-function deleteApiProvider(id) {
-  return updateData((data) => {
-    data.apiProviders =
-      data.apiProviders.filter(
-        (p) =>
-          String(p.id) !==
-          String(id)
-      );
+function deleteApiProvider(
+  id
+) {
+  const db = readDB();
 
-    return data;
-  });
+  db.apiProviders =
+    db.apiProviders.filter(
+      (item) =>
+        String(item.id) !==
+        String(id)
+    );
+
+  writeDB(db);
+
+  return true;
 }
 
-/* =========================================================
-   SETTINGS
-========================================================= */
+/*
+|--------------------------------------------------------------------------
+| Settings
+|--------------------------------------------------------------------------
+*/
 
 function getSettings() {
-  return load().settings;
+  const db = readDB();
+
+  return {
+    ...clone(
+      DEFAULT_DB.settings
+    ),
+    ...(db.settings || {})
+  };
 }
 
-function saveSettings(
-  settings
+function updateSettings(
+  changes
 ) {
-  return updateData((data) => {
-    data.settings = {
-      ...data.settings,
-      ...settings
-    };
+  const db = readDB();
 
-    return data;
-  });
+  db.settings = {
+    ...DEFAULT_DB.settings,
+    ...(db.settings || {}),
+    ...(changes || {})
+  };
+
+  writeDB(db);
+
+  return db.settings;
 }
 
-/* =========================================================
-   ADS
-========================================================= */
+/*
+|--------------------------------------------------------------------------
+| Ads
+|--------------------------------------------------------------------------
+*/
 
 function getAds() {
-  return load().ads;
+  const db = readDB();
+
+  return db.ads || {};
 }
 
-function saveAds(ads) {
-  return updateData((data) => {
-    data.ads = {
-      ...data.ads,
-      ...ads
-    };
+function updateAds(
+  ads
+) {
+  const db = readDB();
 
-    return data;
-  });
+  db.ads =
+    ads &&
+    typeof ads === "object"
+      ? ads
+      : {};
+
+  writeDB(db);
+
+  return db.ads;
 }
 
-/* =========================================================
-   EXPORT
-========================================================= */
+/*
+|--------------------------------------------------------------------------
+| Database info
+|--------------------------------------------------------------------------
+*/
+
+function getDatabasePath() {
+  return DB_FILE;
+}
+
+/*
+|--------------------------------------------------------------------------
+| Export
+|--------------------------------------------------------------------------
+*/
 
 module.exports = {
   DB_FILE,
 
-  getData,
-  updateData,
+  getDatabasePath,
 
   getPrompts,
   addPrompt,
@@ -339,8 +465,16 @@ module.exports = {
   deleteApiProvider,
 
   getSettings,
-  saveSettings,
+  updateSettings,
 
   getAds,
-  saveAds
+  updateAds
 };
+
+/*
+|--------------------------------------------------------------------------
+| Initialize
+|--------------------------------------------------------------------------
+*/
+
+ensureDatabase();
