@@ -1,12 +1,42 @@
 {
-  "copy_gate": {
+  "head_code": {
     "enabled": false,
-    "seconds": 10,
-    "url": "",
-    "openOnCopy": true
+    "code": "",
+    "height": 0
   },
-  "smart_link": {
+  "popunder": {
     "enabled": false,
-    "url": ""
+    "code": "",
+    "height": 0
+  },
+  "social_bar": {
+    "enabled": false,
+    "code": "",
+    "height": 0
+  },
+  "banner_top": {
+    "enabled": false,
+    "code": "",
+    "height": 90
+  },
+  "banner_middle": {
+    "enabled": false,
+    "code": "",
+    "height": 90
+  },
+  "banner_bottom": {
+    "enabled": false,
+    "code": "",
+    "height": 90
+  },
+  "modal_banner": {
+    "enabled": false,
+    "code": "",
+    "height": 250
+  },
+  "native_banner": {
+    "enabled": false,
+    "code": "",
+    "height": 250
   }
 }
