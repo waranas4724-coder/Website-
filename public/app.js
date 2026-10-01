@@ -19,350 +19,754 @@ const modal = $('modal');
 let media = 'all';
 let category = 'all';
 let timer;
+let copyTimer = null;
+
+
+/* =========================================================
+   ADS
+========================================================= */
+
+async function loadAds() {
+  try {
+    const r = await fetch('/api/ads');
+
+    if (!r.ok) {
+      ADS = {};
+      return;
+    }
+
+    ADS = await r.json();
+
+  } catch {
+    ADS = {};
+  }
+}
+
+
+/*
+  Render enabled ad slots.
+  Ads remain separate from API settings.
+*/
+
+function renderAd(slot, container) {
+
+  if (!container) return;
+
+  const ad = ADS?.[slot];
+
+  if (!ad || !ad.enabled || !ad.code) {
+    container.innerHTML = '';
+    return;
+  }
+
+  container.innerHTML = ad.code;
+
+  if (ad.height) {
+    container.style.minHeight =
+      `${Number(ad.height)}px`;
+  }
+}
+
+
+/* =========================================================
+   CARD
+========================================================= */
 
 function card(p, i) {
+
   return `
     <article
       class="card"
       data-slug="${esc(p.slug)}"
       style="animation-delay:${Math.min(i, 12) * 45}ms"
     >
+
       <div class="thumb">
+
         ${
           p.imageUrl
-            ? `<img
+            ? `
+              <img
                 src="${esc(p.imageUrl)}"
                 loading="lazy"
                 alt="${esc(p.title)}"
-              >`
-            : '<span>✦</span>'
+              >
+            `
+            : `
+              <span>✦</span>
+            `
         }
+
       </div>
 
       <div class="body">
+
         <div class="meta">
-          ${esc(p.media)} · ${esc(p.model)}
+          ${esc(p.media || 'Image')}
+          ·
+          ${esc(p.model || 'AI')}
         </div>
 
-        <h3>${esc(p.title)}</h3>
+        <h3>
+          ${esc(p.title)}
+        </h3>
 
         <div class="excerpt">
           ${esc(p.prompt)}
         </div>
 
         <span class="tag">
-          ${esc(p.category)}
+          ${esc(p.category || 'General')}
         </span>
+
       </div>
+
     </article>
   `;
 }
 
-async function loadAds() {
-  try {
-    ADS = await (await fetch('/api/ads')).json();
-  } catch {
-    ADS = {};
-  }
-}
+
+/* =========================================================
+   LOAD POSTS
+========================================================= */
 
 async function load() {
+
   try {
-    const r = await fetch(
-      `/api/prompts?q=${encodeURIComponent(search.value.trim())}` +
-      `&media=${encodeURIComponent(media)}` +
-      `&category=${encodeURIComponent(category)}`
-    );
 
-    if (!r.ok) throw new Error('Failed to load prompts');
+    const r =
+      await fetch(
+        `/api/prompts?q=${encodeURIComponent(
+          search.value.trim()
+        )}` +
+        `&media=${encodeURIComponent(media)}` +
+        `&category=${encodeURIComponent(category)}`
+      );
 
-    const items = await r.json();
+    if (!r.ok) {
+      throw new Error(
+        'Failed to load prompts'
+      );
+    }
 
-    count.textContent = `${items.length} prompts`;
+    const items =
+      await r.json();
+
+    count.textContent =
+      `${items.length} prompts`;
 
     grid.innerHTML =
       items.map(card).join('') ||
       '<div class="muted">No prompts found.</div>';
 
   } catch {
+
     grid.innerHTML =
       '<div class="muted">Could not load prompts. Please refresh.</div>';
+
   }
+
 }
 
+
+/* =========================================================
+   COPY
+========================================================= */
+
 async function copyText(text) {
+
   try {
-    await navigator.clipboard.writeText(text);
+
+    await navigator.clipboard.writeText(
+      text
+    );
+
   } catch {
-    const textarea = document.createElement('textarea');
+
+    const textarea =
+      document.createElement('textarea');
 
     textarea.value = text;
 
-    document.body.appendChild(textarea);
+    document.body.appendChild(
+      textarea
+    );
 
     textarea.select();
 
-    document.execCommand('copy');
+    document.execCommand(
+      'copy'
+    );
 
     textarea.remove();
+
   }
+
 }
 
-async function openPrompt(slug, push = true) {
-  const r = await fetch(
-    '/api/prompts/' + encodeURIComponent(slug)
-  );
+
+/* =========================================================
+   COPY GATE
+========================================================= */
+
+async function startCopyGate(
+  button,
+  prompt
+) {
+
+  if (copyTimer) {
+    clearInterval(copyTimer);
+    copyTimer = null;
+  }
+
+  let cfg;
+
+  try {
+
+    cfg =
+      await fetch(
+        '/api/public/settings'
+      ).then(
+        (x) => x.json()
+      );
+
+  } catch {
+
+    cfg = {
+      copyGateSeconds: 10,
+      directLink: ''
+    };
+
+  }
+
+
+  const seconds =
+    Math.max(
+      0,
+      Math.min(
+        120,
+        Number(
+          cfg.copyGateSeconds || 10
+        )
+      )
+    );
+
+
+  /*
+    Open direct link immediately
+    from the user's button click.
+  */
+
+  if (cfg.directLink) {
+
+    window.open(
+      cfg.directLink,
+      '_blank',
+      'noopener'
+    );
+
+  }
+
+
+  if (!seconds) {
+
+    await copyText(prompt);
+
+    button.textContent =
+      'Copied ✓';
+
+    return;
+
+  }
+
+
+  let left = seconds;
+
+  button.disabled = true;
+
+  button.textContent =
+    `Unlock in ${left}s`;
+
+
+  copyTimer =
+    setInterval(
+      async () => {
+
+        left--;
+
+        if (left > 0) {
+
+          button.textContent =
+            `Unlock in ${left}s`;
+
+          return;
+
+        }
+
+
+        clearInterval(
+          copyTimer
+        );
+
+        copyTimer = null;
+
+        button.disabled = false;
+
+        button.textContent =
+          'Copy prompt';
+
+
+        button.onclick =
+          async () => {
+
+            await copyText(
+              prompt
+            );
+
+            button.textContent =
+              'Copied ✓';
+
+          };
+
+      },
+      1000
+    );
+
+}
+
+
+/* =========================================================
+   OPEN PROMPT
+========================================================= */
+
+async function openPrompt(
+  slug,
+  push = true
+) {
+
+  const r =
+    await fetch(
+      '/api/prompts/' +
+      encodeURIComponent(slug)
+    );
 
   if (!r.ok) return;
 
-  const p = await r.json();
+  const p =
+    await r.json();
 
-  modal.classList.remove('hidden');
+
+  modal.classList.remove(
+    'hidden'
+  );
+
 
   if (push) {
-    history.pushState(null, '', '/p/' + p.slug);
+
+    history.pushState(
+      null,
+      '',
+      '/p/' + p.slug
+    );
+
   }
 
-  modal.querySelector('#modalBody').innerHTML = `
+
+  modal.querySelector(
+    '#modalBody'
+  ).innerHTML = `
+
     <div class="meta">
-      ${esc(p.media)} · ${esc(p.model)} · ${esc(p.category)}
+      ${esc(p.media || 'Image')}
+      ·
+      ${esc(p.model || 'AI')}
+      ·
+      ${esc(p.category || 'General')}
     </div>
 
-    <h2>${esc(p.title)}</h2>
+    <h2>
+      ${esc(p.title)}
+    </h2>
+
 
     ${
       p.imageUrl
-        ? `<img
+        ? `
+          <img
             src="${esc(p.imageUrl)}"
             alt="${esc(p.title)}"
-          >`
+          >
+        `
         : ''
     }
+
 
     <div class="fullprompt">
       ${esc(p.prompt)}
     </div>
 
-    <button class="copy" id="copy">
+
+    <button
+      class="copy"
+      id="copy"
+    >
       Copy prompt
     </button>
 
+
     <div class="lic">
-      Source: ${esc(p.source || 'PromptForge')}
+      Source:
+      ${esc(
+        p.source ||
+        'PromptForge'
+      )}
     </div>
+
   `;
 
-  const btn = $('copy');
 
-  btn.onclick = async () => {
+  const btn =
+    $('copy');
 
-    const cfg = await fetch('/api/public/settings')
-      .then((x) => x.json())
-      .catch(() => ({
-        copyGateSeconds: 10,
-        directLink: ''
-      }));
 
-    const sec = Math.max(
-      0,
-      Math.min(
-        120,
-        Number(cfg.copyGateSeconds || 10)
-      )
-    );
+  btn.onclick =
+    async () => {
 
-    if (cfg.directLink) {
-      window.open(
-        cfg.directLink,
-        '_blank',
-        'noopener'
+      await startCopyGate(
+        btn,
+        p.prompt
       );
-    }
 
-    if (sec) {
+    };
 
-      let left = sec;
-
-      btn.disabled = true;
-
-      btn.textContent = `Unlock in ${left}s`;
-
-      const interval = setInterval(() => {
-
-        left--;
-
-        btn.textContent = left
-          ? `Unlock in ${left}s`
-          : 'Copy prompt';
-
-        if (!left) {
-
-          clearInterval(interval);
-
-          btn.disabled = false;
-
-          btn.onclick = async () => {
-
-            await copyText(p.prompt);
-
-            btn.textContent = 'Copied ✓';
-          };
-        }
-
-      }, 1000);
-
-    } else {
-
-      await copyText(p.prompt);
-
-      btn.textContent = 'Copied ✓';
-    }
-  };
 }
+
+
+/* =========================================================
+   CLOSE MODAL
+========================================================= */
 
 function closeModal() {
 
-  modal.classList.add('hidden');
+  modal.classList.add(
+    'hidden'
+  );
 
-  if (location.pathname.startsWith('/p/')) {
+
+  if (
+    location.pathname.startsWith(
+      '/p/'
+    )
+  ) {
 
     history.replaceState(
       null,
       '',
       '/'
     );
+
   }
+
 }
 
-document.querySelectorAll('.pill').forEach((button) => {
 
-  button.onclick = () => {
-
-    document
-      .querySelectorAll('.pill')
-      .forEach((x) => x.classList.remove('active'));
-
-    button.classList.add('active');
-
-    media = button.dataset.media;
-
-    load();
-  };
-});
+/* =========================================================
+   MEDIA FILTER
+========================================================= */
 
 document
-  .querySelectorAll('.categories button')
-  .forEach((button) => {
+  .querySelectorAll('.pill')
+  .forEach(
+    (button) => {
 
-    button.onclick = () => {
+      button.onclick = () => {
 
-      category =
-        category === button.dataset.cat
-          ? 'all'
-          : button.dataset.cat;
+        if (
+          !button.dataset.media
+        ) {
+          return;
+        }
 
-      document
-        .querySelectorAll('.categories button')
-        .forEach((x) => {
 
-          x.classList.toggle(
-            'on',
-            x.dataset.cat === category
+        document
+          .querySelectorAll(
+            '.pill'
+          )
+          .forEach(
+            (x) =>
+              x.classList.remove(
+                'active'
+              )
           );
 
-        });
 
-      document
-        .querySelector('#prompts')
-        .scrollIntoView({
-          behavior: 'smooth'
-        });
+        button.classList.add(
+          'active'
+        );
 
-      load();
-    };
-  });
 
-search.oninput = () => {
+        media =
+          button.dataset.media;
 
-  clearTimeout(timer);
+        load();
 
-  timer = setTimeout(
-    load,
-    220
+      };
+
+    }
   );
-};
 
-grid.onclick = (event) => {
 
-  const cardElement =
-    event.target.closest('.card');
+/* =========================================================
+   CATEGORY FILTER
+========================================================= */
 
-  if (cardElement) {
+document
+  .querySelectorAll(
+    '.categories button'
+  )
+  .forEach(
+    (button) => {
 
-    openPrompt(
-      cardElement.dataset.slug
+      button.onclick = () => {
+
+        category =
+          category ===
+          button.dataset.cat
+            ? 'all'
+            : button.dataset.cat;
+
+
+        document
+          .querySelectorAll(
+            '.categories button'
+          )
+          .forEach(
+            (x) => {
+
+              x.classList.toggle(
+                'on',
+                x.dataset.cat ===
+                  category
+              );
+
+            }
+          );
+
+
+        document
+          .querySelector(
+            '#prompts'
+          )
+          .scrollIntoView({
+            behavior:
+              'smooth'
+          });
+
+
+        load();
+
+      };
+
+    }
+  );
+
+
+/* =========================================================
+   SEARCH
+========================================================= */
+
+search.oninput =
+  () => {
+
+    clearTimeout(
+      timer
     );
-  }
-};
 
-$('close').onclick = closeModal;
+    timer =
+      setTimeout(
+        load,
+        220
+      );
 
-modal.onclick = (event) => {
+  };
 
-  if (event.target === modal) {
-    closeModal();
-  }
-};
 
-document.onkeydown = (event) => {
+/* =========================================================
+   CARD CLICK
+========================================================= */
 
-  if (event.key === 'Escape') {
-    closeModal();
-  }
+grid.onclick =
+  (event) => {
 
-  if (
-    (event.ctrlKey || event.metaKey) &&
-    event.key.toLowerCase() === 'k'
-  ) {
+    const cardElement =
+      event.target.closest(
+        '.card'
+      );
 
-    event.preventDefault();
 
-    search.focus();
-  }
-};
+    if (
+      cardElement &&
+      cardElement.dataset.slug
+    ) {
 
-/*
-  Hidden admin access:
-  Click the logo 5 times quickly.
-*/
+      openPrompt(
+        cardElement.dataset.slug
+      );
+
+    }
+
+  };
+
+
+/* =========================================================
+   MODAL
+========================================================= */
+
+$('close').onclick =
+  closeModal;
+
+
+modal.onclick =
+  (event) => {
+
+    if (
+      event.target ===
+      modal
+    ) {
+
+      closeModal();
+
+    }
+
+  };
+
+
+/* =========================================================
+   KEYBOARD
+========================================================= */
+
+document.onkeydown =
+  (event) => {
+
+    if (
+      event.key ===
+      'Escape'
+    ) {
+
+      closeModal();
+
+    }
+
+
+    if (
+      (event.ctrlKey ||
+        event.metaKey) &&
+      event.key.toLowerCase() ===
+        'k'
+    ) {
+
+      event.preventDefault();
+
+      search.focus();
+
+    }
+
+  };
+
+
+/* =========================================================
+   HIDDEN ADMIN
+   LOGO 5 CLICKS
+========================================================= */
 
 let clicks = 0;
 let lastClick = 0;
 
-$('brand').onclick = () => {
 
-  const now = Date.now();
+$('brand').onclick =
+  () => {
 
-  if (now - lastClick > 1800) {
-    clicks = 0;
-  }
+    const now =
+      Date.now();
 
-  lastClick = now;
 
-  clicks++;
+    if (
+      now - lastClick >
+      1800
+    ) {
 
-  if (clicks >= 5) {
+      clicks = 0;
 
-    clicks = 0;
+    }
 
-    location.href = '/admin.html';
-  }
-};
+
+    lastClick =
+      now;
+
+    clicks++;
+
+
+    if (
+      clicks >= 5
+    ) {
+
+      clicks = 0;
+
+      location.href =
+        '/admin.html';
+
+    }
+
+  };
+
+
+/* =========================================================
+   DIRECT PROMPT URL
+========================================================= */
 
 const promptPath =
   location.pathname.match(
     /^\/p\/([\w-]+)/
   );
+
+
+/* =========================================================
+   START
+========================================================= */
+
+Promise.all([
+  loadAds(),
+  load()
+]).then(() => {
+
+  /*
+    Ads are intentionally kept
+    separate from API settings.
+  */
+
+  renderAd(
+    'banner_top',
+    document.querySelector(
+      '[data-ad="banner_top"]'
+    )
+  );
+
+  renderAd(
+    'banner_middle',
+    document.querySelector(
+      '[data-ad="banner_middle"]'
+    )
+  );
+
+  renderAd(
+    'banner_bottom',
+    document.querySelector(
+      '[data-ad="banner_bottom"]'
+    )
+  );
+
+});
+
 
 if (promptPath) {
 
@@ -370,6 +774,5 @@ if (promptPath) {
     promptPath[1],
     false
   );
-}
 
-loadAds().finally(load);
+}
