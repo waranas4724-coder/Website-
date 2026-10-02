@@ -1,1350 +1,99 @@
-require('dotenv').config();
+require("dotenv").config();
 
-const express = require('express');
-const session = require('express-session');
-const path = require('path');
-const crypto = require('crypto');
-const cloudinary = require('cloudinary').v2;
+const express = require("express");
+const session = require("express-session");
+const path = require("path");
+const crypto = require("crypto");
+const cloudinary = require("cloudinary").v2;
 
 const {
   getPrompts,
   getPromptBySlug,
   addPrompt,
   deletePrompt,
+
   getProviders,
+  getProviderById,
   addProvider,
+  updateProvider,
   deleteProvider,
+
   getSettings,
   saveSettings,
+
   getAds,
   saveAds
-} = require('./db');
+} = require("./db");
 
 const app = express();
-const PORT = Number(process.env.PORT || 3000);
 
-app.set('trust proxy', 1);
-app.disable('x-powered-by');
-
-app.use(express.json({ limit: '2mb' }));
-app.use(express.urlencoded({ extended: true }));
-app.use(express.static(path.join(__dirname, 'public')));
-
-app.use(session({
-  secret:
-    process.env.SESSION_SECRET ||
-    crypto.randomBytes(32).toString('hex'),
-  resave: false,
-  saveUninitialized: false,
-  cookie: {
-    httpOnly: true,
-    sameSite: 'lax',
-    secure: 'auto',
-    maxAge: 8 * 60 * 60 * 1000
-  }
-}));
-
-const ADMIN_USERNAME =
-  process.env.ADMIN_USERNAME || 'admin';
-
-const ADMIN_PASSWORD =
-  process.env.ADMIN_PASSWORD || '';
+const PORT = process.env.PORT || 3000;
 
 /* =========================================================
-   CREATIVE CATEGORIES
+   BASIC CONFIG
 ========================================================= */
 
-const CREATIVE_CATEGORIES = [
-  'Portrait Photography',
-  'Fashion Photography',
-  'Brand Design',
-  'Commercial Photography',
-  'Product Photography',
-  'Architecture',
-  'Travel Photography',
-  'Editorial Photography',
-  'Cinematic Photography',
-  'Nature Photography',
-  'Automotive Photography',
-  'Food Photography',
-  'Interior Design',
-  'Graphic Design',
-  'Fantasy Art',
-  'Creative Art',
-  'Luxury',
-  'Minimalist',
-  'Lifestyle',
-  'Surreal Art'
-];
+app.set("trust proxy", 1);
+app.disable("x-powered-by");
 
-/* =========================================================
-   API ROTATION
-========================================================= */
+app.use(
+  express.json({
+    limit: "2mb"
+  })
+);
 
-const providerCursors = new Map();
+app.use(
+  express.urlencoded({
+    extended: true,
+    limit: "2mb"
+  })
+);
 
-function clean(value, max = 20000) {
-  return String(value ?? '')
-    .trim()
-    .slice(0, max);
-}
-
-function normalizeCategory(value) {
-  const s = clean(value)
-    .toLowerCase()
-    .replace(/[\s/-]+/g, '_');
-
-  if (
-    [
-      'trending',
-      'trending_search',
-      'trendingsearch'
-    ].includes(s)
-  ) {
-    return 'trending_search';
-  }
-
-  if (
-    [
-      'prompt',
-      'prompt_generate',
-      'promptgenerate'
-    ].includes(s)
-  ) {
-    return 'prompt_generate';
-  }
-
-  if (
-    [
-      'photo',
-      'image',
-      'photo_generate',
-      'image_generate',
-      'photogenerate'
-    ].includes(s)
-  ) {
-    return 'photo_generate';
-  }
-
-  return s;
-}
-
-function normalizeProvider(p) {
-  return {
-    ...p,
-
-    id: p.id,
-
-    category: normalizeCategory(
-      p.category ||
-      p.type ||
-      p.provider_category
-    ),
-
-    providerName: clean(
-      p.providerName ||
-      p.provider_name ||
-      p.name ||
-      p.provider ||
-      ''
-    ),
-
-    apiKey: clean(
-      p.apiKey ||
-      p.api_key ||
-      p.key ||
-      '',
-      20000
-    ),
-
-    enabled:
-      p.enabled === true ||
-      p.enabled === 1 ||
-      p.enabled === 'true'
-  };
-}
-
-async function allProviders() {
-  const rows = await getProviders();
-
-  return Array.isArray(rows)
-    ? rows.map(normalizeProvider)
-    : [];
-}
-
-async function providersFor(category) {
-  const wanted =
-    normalizeCategory(category);
-
-  const providers =
-    await allProviders();
-
-  return providers.filter(p => {
-    if (
-      p.category !== wanted ||
-      !p.enabled ||
-      !p.providerName
-    ) {
-      return false;
-    }
-
-    if (p.apiKey) {
-      return true;
-    }
-
-    const name =
-      clean(p.providerName)
-        .toLowerCase();
-
-    return (
-      wanted === 'trending_search' &&
-      [
-        'bluesky',
-        'bluesky public',
-        'reddit public',
-        'reddit (public)'
-      ].includes(name)
-    );
-  });
-}
-
-function providerOrder(
-  category,
-  providers
-) {
-  if (!providers.length) {
-    return [];
-  }
-
-  const key =
-    normalizeCategory(category);
-
-  const start =
-    Number(
-      providerCursors.get(key) || 0
-    ) % providers.length;
-
-  return providers.map(
-    (provider, offset) => ({
-      provider,
-
-      index:
-        (start + offset) %
-        providers.length
-    })
-  );
-}
-
-function markProviderSuccess(
-  category,
-  index,
-  total
-) {
-  if (!total) return;
-
-  providerCursors.set(
-    normalizeCategory(category),
-    (index + 1) % total
-  );
-}
-
-function providerNameMatches(
-  name,
-  expected
-) {
-  return (
-    clean(name).toLowerCase() ===
-    expected.toLowerCase()
-  );
-}
-
-/* =========================================================
-   HELPERS
-========================================================= */
-
-function slugify(value) {
-  return (
-    clean(value)
-      .toLowerCase()
-      .replace(/[^a-z0-9]+/g, '-')
-      .replace(/^-+|-+$/g, '')
-      .slice(0, 90) ||
-    'prompt'
-  );
-}
-
-function makeSlug(title) {
-  return (
-    `${slugify(title)}-${crypto
-      .randomBytes(3)
-      .toString('hex')}`
-  );
-}
-
-function uniqueTitle(
-  base,
-  existing
-) {
-  const original =
-    clean(base, 140) ||
-    'AI Visual Prompt';
-
-  const used = new Set(
-    (existing || []).map(p =>
-      clean(
-        p.title,
-        140
-      ).toLowerCase()
-    )
-  );
-
-  if (
-    !used.has(
-      original.toLowerCase()
-    )
-  ) {
-    return original;
-  }
-
-  let n = 2;
-
-  while (
-    used.has(
-      `${original} ${n}`.toLowerCase()
-    )
-  ) {
-    n++;
-  }
-
-  return `${original} ${n}`;
-}
-
-async function fetchJson(
-  url,
-  options = {}
-) {
-  const response = await fetch(
-    url,
-    {
-      ...options,
-
-      signal:
-        options.signal ||
-        AbortSignal.timeout(
-          30000
-        )
-    }
-  );
-
-  const text =
-    await response.text();
-
-  let data;
-
-  try {
-    data = JSON.parse(text);
-  } catch {
-    data = {
-      raw: text
-    };
-  }
-
-  if (!response.ok) {
-    const message =
-      data?.error?.message ||
-      data?.message ||
-      data?.error ||
-      `HTTP ${response.status}`;
-
-    const err =
-      new Error(
-        `${response.status} ${String(
-          message
-        ).slice(0, 500)}`
-      );
-
-    err.status =
-      response.status;
-
-    throw err;
-  }
-
-  return data;
-}
-
-async function fetchBinary(
-  url,
-  options = {}
-) {
-  const response =
-    await fetch(
-      url,
-      {
-        ...options,
-
-        signal:
-          options.signal ||
-          AbortSignal.timeout(
-            120000
-          )
-      }
-    );
-
-  if (!response.ok) {
-    const text =
-      await response
-        .text()
-        .catch(() => '');
-
-    throw new Error(
-      `HTTP ${response.status}${
-        text
-          ? `: ${text.slice(0, 300)}`
-          : ''
-      }`
-    );
-  }
-
-  return Buffer.from(
-    await response.arrayBuffer()
-  );
-}
-
-/* =========================================================
-   TRENDING / SOCIAL MEDIA APIs
-========================================================= */
-
-async function trendingNewsData(
-  apiKey
-) {
-  const url =
-    `https://newsdata.io/api/1/latest?apikey=${encodeURIComponent(
-      apiKey
-    )}&language=en&size=10`;
-
-  const data =
-    await fetchJson(url);
-
-  return (
-    Array.isArray(
-      data.results
-    )
-      ? data.results
-      : []
+app.use(
+  express.static(
+    path.join(__dirname, "public")
   )
-    .map(x => ({
-      title: clean(
-        x.title,
-        180
-      ),
-
-      description: clean(
-        x.description ||
-        x.content ||
-        '',
-        500
-      )
-    }))
-    .filter(x => x.title);
-}
-
-async function trendingGNews(
-  apiKey
-) {
-  const url =
-    `https://gnews.io/api/v4/top-headlines?lang=en&max=10&apikey=${encodeURIComponent(
-      apiKey
-    )}`;
-
-  const data =
-    await fetchJson(url);
-
-  return (
-    Array.isArray(
-      data.articles
-    )
-      ? data.articles
-      : []
-  )
-    .map(x => ({
-      title: clean(
-        x.title,
-        180
-      ),
-
-      description: clean(
-        x.description ||
-        x.content ||
-        '',
-        500
-      )
-    }))
-    .filter(x => x.title);
-}
-
-async function trendingReddit(
-  apiKey
-) {
-  const headers = {
-    'User-Agent':
-      'PromptForge/1.0 trend-discovery',
-
-    ...(apiKey
-      ? {
-          Authorization:
-            `Bearer ${apiKey}`
-        }
-      : {})
-  };
-
-  const data =
-    await fetchJson(
-      'https://www.reddit.com/r/popular/hot.json?limit=20',
-      { headers }
-    );
-
-  const children =
-    data?.data?.children ||
-    [];
-
-  return children
-    .map(x => ({
-      title: clean(
-        x?.data?.title,
-        180
-      ),
-
-      description: clean(
-        x?.data?.selftext ||
-        x?.data?.subreddit_name_prefixed ||
-        '',
-        500
-      )
-    }))
-    .filter(x => x.title);
-}
-
-async function trendingYouTube(
-  apiKey
-) {
-  const url =
-    `https://www.googleapis.com/youtube/v3/videos?part=snippet&chart=mostPopular&regionCode=US&maxResults=20&key=${encodeURIComponent(
-      apiKey
-    )}`;
-
-  const data =
-    await fetchJson(url);
-
-  return (
-    Array.isArray(
-      data.items
-    )
-      ? data.items
-      : []
-  )
-    .map(x => ({
-      title: clean(
-        x?.snippet?.title,
-        180
-      ),
-
-      description: clean(
-        x?.snippet?.description ||
-        '',
-        500
-      )
-    }))
-    .filter(x => x.title);
-}
-
-async function trendingX(
-  apiKey
-) {
-  if (!apiKey) {
-    throw new Error(
-      'X/Twitter requires a Bearer token.'
-    );
-  }
-
-  const data =
-    await fetchJson(
-      'https://api.x.com/2/tweets/search/recent?query=-is:retweet&max_results=25&tweet.fields=created_at,lang',
-      {
-        headers: {
-          Authorization:
-            `Bearer ${apiKey}`
-        }
-      }
-    );
-
-  return (
-    Array.isArray(
-      data.data
-    )
-      ? data.data
-      : []
-  )
-    .map(x => ({
-      title: clean(
-        x.text,
-        180
-      ),
-
-      description:
-        `X recent post${
-          x.created_at
-            ? ` · ${x.created_at}`
-            : ''
-        }`
-    }))
-    .filter(x => x.title);
-}
-
-async function trendingBluesky() {
-  const url =
-    'https://public.api.bsky.app/xrpc/app.bsky.feed.getFeed?feed=at%3A%2F%2Fdid%3Aplc%3Az72i7hdynmk6r22z27h6tvur%2Fapp.bsky.feed.generator%2Fwhats-hot&limit=25';
-
-  const data =
-    await fetchJson(url);
-
-  return (
-    Array.isArray(
-      data.feed
-    )
-      ? data.feed
-      : []
-  )
-    .map(x => ({
-      title: clean(
-        x?.post?.record?.text,
-        180
-      ),
-
-      description: clean(
-        x?.post?.record?.createdAt ||
-        '',
-        500
-      )
-    }))
-    .filter(x => x.title);
-}
-
-async function getTrendSignal() {
-  const providers =
-    await providersFor(
-      'trending_search'
-    );
-
-  console.log(
-    '[AUTO] Trend providers:',
-    providers
-      .map(p => p.providerName)
-      .join(', ') ||
-      'none'
-  );
-
-  for (
-    const {
-      provider,
-      index
-    } of providerOrder(
-      'trending_search',
-      providers
-    )
-  ) {
-    try {
-      let items = [];
-
-      const name =
-        clean(
-          provider.providerName
-        ).toLowerCase();
-
-      if (
-        providerNameMatches(
-          provider.providerName,
-          'NewsData.io'
-        )
-      ) {
-        items =
-          await trendingNewsData(
-            provider.apiKey
-          );
-      }
-
-      else if (
-        providerNameMatches(
-          provider.providerName,
-          'GNews'
-        )
-      ) {
-        items =
-          await trendingGNews(
-            provider.apiKey
-          );
-      }
-
-      else if (
-        [
-          'reddit',
-          'reddit api',
-          'reddit public',
-          'reddit (public)'
-        ].includes(name)
-      ) {
-        items =
-          await trendingReddit(
-            provider.apiKey
-          );
-      }
-
-      else if (
-        [
-          'youtube',
-          'youtube api',
-          'youtube data api'
-        ].includes(name)
-      ) {
-        items =
-          await trendingYouTube(
-            provider.apiKey
-          );
-      }
-
-      else if (
-        [
-          'x',
-          'x api',
-          'twitter',
-          'twitter api'
-        ].includes(name)
-      ) {
-        items =
-          await trendingX(
-            provider.apiKey
-          );
-      }
-
-      else if (
-        [
-          'bluesky',
-          'bluesky public'
-        ].includes(name)
-      ) {
-        items =
-          await trendingBluesky();
-      }
-
-      else {
-        throw new Error(
-          `Unsupported Trending provider: ${provider.providerName}`
-        );
-      }
-
-      if (!items.length) {
-        throw new Error(
-          'Provider returned no trend items.'
-        );
-      }
-
-      const pick =
-        items[
-          Math.floor(
-            Math.random() *
-            Math.min(
-              items.length,
-              10
-            )
-          )
-        ];
-
-      markProviderSuccess(
-        'trending_search',
-        index,
-        providers.length
-      );
-
-      console.log(
-        `[AUTO] Trend source: ${provider.providerName}`
-      );
-
-      return {
-        signal:
-          pick.title,
-
-        context:
-          pick.description,
-
-        provider:
-          provider.providerName
-      };
-
-    } catch (error) {
-      console.error(
-        `[AUTO ERROR] Trend ${provider.providerName}:`,
-        error.message
-      );
-    }
-  }
-
-  const fallback =
-    CREATIVE_SEEDS[
-      Math.floor(
-        Math.random() *
-        CREATIVE_SEEDS.length
-      )
-    ];
-
-  return {
-    signal: fallback,
-    context: '',
-    provider:
-      'Creative Seed'
-  };
-}
+);
 
 /* =========================================================
-   GEMINI
+   SESSION
 ========================================================= */
 
-function extractGeminiText(
-  data
-) {
-  const parts =
-    data?.candidates?.[0]
-      ?.content?.parts;
-
-  if (
-    Array.isArray(parts)
-  ) {
-    return parts
-      .map(p => p?.text || '')
-      .join('\n')
-      .trim();
-  }
-
-  return '';
+if (!process.env.SESSION_SECRET) {
+  console.warn(
+    "[AUTH] SESSION_SECRET is not set."
+  );
 }
 
-function extractJsonObject(
-  text
-) {
-  const raw =
-    clean(text, 20000)
-      .replace(/^```json\s*/i, '')
-      .replace(/^```\s*/i, '')
-      .replace(/```\s*$/i, '')
-      .trim();
+app.use(
+  session({
+    secret:
+      process.env.SESSION_SECRET ||
+      crypto.randomBytes(32).toString("hex"),
 
-  try {
-    return JSON.parse(raw);
-  } catch {}
+    resave: false,
 
-  const start =
-    raw.indexOf('{');
+    saveUninitialized: false,
 
-  const end =
-    raw.lastIndexOf('}');
-
-  if (
-    start >= 0 &&
-    end > start
-  ) {
-    try {
-      return JSON.parse(
-        raw.slice(
-          start,
-          end + 1
-        )
-      );
-    } catch {}
-  }
-
-  return null;
-}
-
-async function generateWithGemini(
-  apiKey,
-  trend,
-  category
-) {
-  if (!apiKey) {
-    throw new Error(
-      'Gemini API key missing.'
-    );
-  }
-
-  const model =
-    'gemini-3.5-flash-lite';
-
-  const endpoint =
-    `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(
-      apiKey
-    )}`;
-
-  const systemPrompt = `
-You create original AI visual concepts for a premium
-AI prompt website.
-
-Do NOT copy or reproduce a news article.
-Use the trend only as inspiration.
-
-Return ONLY valid JSON:
-
-{
-  "title": "...",
-  "category": "...",
-  "concept": "...",
-  "imagePrompt": "..."
-}
-
-Rules:
-- title: short premium creative title
-- category: one suitable photography/art/design category
-- concept: one sentence explaining the visual concept
-- imagePrompt: detailed production-ready image generation prompt
-- imagePrompt must describe subject, composition,
-  camera, lens, lighting, environment, colors,
-  materials/textures, atmosphere and professional finish
-- no markdown
-- no copyrighted character names
-- no real person's identity
-- no article text
-- no URLs
-`;
-
-  const userPrompt = `
-Trend signal:
-${clean(trend.signal, 500)}
-
-Trend context:
-${clean(trend.context, 1000)}
-
-Preferred creative category:
-${clean(category, 100)}
-
-Create one original visual concept.
-`;
-
-  const data =
-    await fetchJson(
-      endpoint,
-      {
-        method: 'POST',
-
-        headers: {
-          'Content-Type':
-            'application/json'
-        },
-
-        body: JSON.stringify({
-          contents: [
-            {
-              role: 'user',
-
-              parts: [
-                {
-                  text:
-                    `${systemPrompt}\n${userPrompt}`
-                }
-              ]
-            }
-          ],
-
-          generationConfig: {
-            temperature: 0.9,
-            maxOutputTokens: 1800,
-            responseMimeType:
-              'application/json'
-          }
-        })
-      }
-    );
-
-  const text =
-    extractGeminiText(data);
-
-  const parsed =
-    extractJsonObject(text);
-
-  if (!parsed) {
-    throw new Error(
-      'Gemini returned invalid JSON.'
-    );
-  }
-
-  if (
-    !clean(
-      parsed.imagePrompt
-    )
-  ) {
-    throw new Error(
-      'Gemini did not return imagePrompt.'
-    );
-  }
-
-  return {
-    title:
-      clean(
-        parsed.title,
-        140
-      ) ||
-      'AI Visual Concept',
-
-    category:
-      clean(
-        parsed.category,
-        100
-      ) ||
-      category,
-
-    concept:
-      clean(
-        parsed.concept,
-        500
-      ),
-
-    imagePrompt:
-      clean(
-        parsed.imagePrompt,
-        10000
-      ),
-
-    model
-  };
-}
-
-/* =========================================================
-   PROMPT PROVIDER ROTATION
-========================================================= */
-
-async function generatePrompt(
-  trend,
-  category
-) {
-  const providers =
-    await providersFor(
-      'prompt_generate'
-    );
-
-  if (!providers.length) {
-    throw new Error(
-      'No enabled Prompt Generate API found.'
-    );
-  }
-
-  for (
-    const {
-      provider,
-      index
-    } of providerOrder(
-      'prompt_generate',
-      providers
-    )
-  ) {
-    try {
-      const name =
-        clean(
-          provider.providerName
-        ).toLowerCase();
-
-      let result;
-
-      if (
-        name === 'gemini' ||
-        name === 'google gemini' ||
-        name === 'gemini api'
-      ) {
-        result =
-          await generateWithGemini(
-            provider.apiKey,
-            trend,
-            category
-          );
-      }
-
-      else {
-        throw new Error(
-          `Unsupported Prompt provider: ${provider.providerName}`
-        );
-      }
-
-      if (
-        !result ||
-        !result.imagePrompt
-      ) {
-        throw new Error(
-          'Prompt provider returned empty result.'
-        );
-      }
-
-      markProviderSuccess(
-        'prompt_generate',
-        index,
-        providers.length
-      );
-
-      console.log(
-        `[AUTO] Prompt API: ${provider.providerName}`
-      );
-
-      return {
-        ...result,
-
-        provider:
-          provider.providerName
-      };
-
-    } catch (error) {
-      console.error(
-        `[AUTO ERROR] Prompt ${provider.providerName}:`,
-        error.message
-      );
+    cookie: {
+      httpOnly: true,
+      sameSite: "lax",
+      secure: "auto",
+      maxAge: 8 * 60 * 60 * 1000
     }
-  }
-
-  throw new Error(
-    'All Prompt Generate APIs failed.'
-  );
-}
-
-/* =========================================================
-   IMAGE GENERATION
-========================================================= */
-
-function buildPollinationsUrl(
-  prompt
-) {
-  const encoded =
-    encodeURIComponent(
-      prompt
-    );
-
-  return (
-    `https://image.pollinations.ai/prompt/${encoded}` +
-    `?width=1024&height=1024&nologo=true&enhance=true`
-  );
-}
-
-async function generatePollinations(
-  prompt
-) {
-  const url =
-    buildPollinationsUrl(
-      prompt
-    );
-
-  return await fetchBinary(
-    url
-  );
-}
-
-async function generateHuggingFace(
-  apiKey,
-  prompt
-) {
-  if (!apiKey) {
-    throw new Error(
-      'Hugging Face API key missing.'
-    );
-  }
-
-  const models = [
-    'black-forest-labs/FLUX.1-schnell',
-    'stabilityai/stable-diffusion-xl-base-1.0'
-  ];
-
-  let lastError;
-
-  for (
-    const model of models
-  ) {
-    try {
-      const data =
-        await fetch(
-          `https://router.huggingface.co/hf-inference/models/${model}`,
-          {
-            method: 'POST',
-
-            headers: {
-              Authorization:
-                `Bearer ${apiKey}`,
-
-              'Content-Type':
-                'application/json'
-            },
-
-            body: JSON.stringify({
-              inputs: prompt
-            }),
-
-            signal:
-              AbortSignal.timeout(
-                120000
-              )
-          }
-        );
-
-      if (!data.ok) {
-        const text =
-          await data
-            .text()
-            .catch(() => '');
-
-        throw new Error(
-          `HTTP ${data.status}: ${text.slice(
-            0,
-            300
-          )}`
-        );
-      }
-
-      return Buffer.from(
-        await data.arrayBuffer()
-      );
-
-    } catch (error) {
-      lastError = error;
-    }
-  }
-
-  throw (
-    lastError ||
-    new Error(
-      'Hugging Face image generation failed.'
-    )
-  );
-}
-
-async function generateImage(
-  prompt
-) {
-  const providers =
-    await providersFor(
-      'photo_generate'
-    );
-
-  if (!providers.length) {
-    throw new Error(
-      'No enabled Photo/Image Generate API found.'
-    );
-  }
-
-  for (
-    const {
-      provider,
-      index
-    } of providerOrder(
-      'photo_generate',
-      providers
-    )
-  ) {
-    try {
-      const name =
-        clean(
-          provider.providerName
-        ).toLowerCase();
-
-      let buffer;
-
-      let model =
-        provider.providerName;
-
-      if (
-        name ===
-          'pollinations' ||
-        name ===
-          'pollinations ai'
-      ) {
-        buffer =
-          await generatePollinations(
-            prompt
-          );
-
-        model =
-          'Pollinations';
-      }
-
-      else if (
-        name ===
-          'hugging face' ||
-        name ===
-          'huggingface' ||
-        name ===
-          'hugging face inference'
-      ) {
-        buffer =
-          await generateHuggingFace(
-            provider.apiKey,
-            prompt
-          );
-
-        model =
-          'Hugging Face';
-      }
-
-      else {
-        throw new Error(
-          `Unsupported Photo provider: ${provider.providerName}`
-        );
-      }
-
-      if (
-        !buffer ||
-        !buffer.length
-      ) {
-        throw new Error(
-          'Image API returned empty data.'
-        );
-      }
-
-      markProviderSuccess(
-        'photo_generate',
-        index,
-        providers.length
-      );
-
-      console.log(
-        `[AUTO] Photo API: ${provider.providerName}`
-      );
-
-      return {
-        buffer,
-        provider:
-          provider.providerName,
-        model
-      };
-
-    } catch (error) {
-      console.error(
-        `[AUTO ERROR] Photo ${provider.providerName}:`,
-        error.message
-      );
-    }
-  }
-
-  throw new Error(
-    'All Photo/Image Generate APIs failed.'
-  );
-}
+  })
+);
 
 /* =========================================================
    CLOUDINARY
 ========================================================= */
 
-function cloudinaryReady() {
-  return Boolean(
-    process.env.CLOUDINARY_CLOUD_NAME &&
-    process.env.CLOUDINARY_API_KEY &&
-    process.env.CLOUDINARY_API_SECRET
-  );
-}
+const cloudinaryEnabled =
+  !!process.env.CLOUDINARY_CLOUD_NAME &&
+  !!process.env.CLOUDINARY_API_KEY &&
+  !!process.env.CLOUDINARY_API_SECRET;
 
-function configureCloudinary() {
-  if (!cloudinaryReady()) {
-    return false;
-  }
-
+if (cloudinaryEnabled) {
   cloudinary.config({
     cloud_name:
       process.env.CLOUDINARY_CLOUD_NAME,
@@ -1358,223 +107,3070 @@ function configureCloudinary() {
     secure: true
   });
 
-  return true;
-}
-
-async function uploadToCloudinary(
-  buffer,
-  title
-) {
-  if (!configureCloudinary()) {
-    throw new Error(
-      'Cloudinary environment variables are missing.'
-    );
-  }
-
-  return new Promise(
-    (resolve, reject) => {
-      const stream =
-        cloudinary.uploader.upload_stream(
-          {
-            folder:
-              'promptforge/generated',
-
-            public_id:
-              `${slugify(title)}-${Date.now()}`,
-
-            resource_type:
-              'image'
-          },
-
-          (error, result) => {
-            if (error) {
-              reject(error);
-              return;
-            }
-
-            resolve(result);
-          }
-        );
-
-      stream.end(buffer);
-    }
+  console.log(
+    "[BOOT] Cloudinary storage enabled."
+  );
+} else {
+  console.warn(
+    "[BOOT] Cloudinary environment variables are missing."
   );
 }
 
 /* =========================================================
-   AUTOMATIC POSTING
+   HELPERS
 ========================================================= */
 
-let autoRunning = false;
+function clean(value, fallback = "") {
+  if (
+    value === undefined ||
+    value === null
+  ) {
+    return fallback;
+  }
 
-async function createAutomaticPost() {
-  const trend =
-    await getTrendSignal();
+  return String(value).trim();
+}
 
-  const category =
-    CREATIVE_CATEGORIES[
-      Math.floor(
-        Math.random() *
-        CREATIVE_CATEGORIES.length
-      )
-    ];
+function safeNumber(value, fallback = 0) {
+  const n = Number(value);
 
-  const generated =
-    await generatePrompt(
-      trend,
-      category
+  return Number.isFinite(n)
+    ? n
+    : fallback;
+}
+
+function slugify(value) {
+  return String(value || "")
+    .toLowerCase()
+    .trim()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 90);
+}
+
+function httpUrl(value) {
+  const v = clean(value);
+
+  return /^https?:\/\//i.test(v)
+    ? v
+    : "";
+}
+
+function uniqueTitle(title) {
+  return clean(title).slice(0, 180);
+}
+
+function providerNameMatches(provider, names) {
+  const name = clean(
+    provider?.providerName
+  ).toLowerCase();
+
+  return names.some(
+    x =>
+      name === x.toLowerCase() ||
+      name.includes(x.toLowerCase())
+  );
+}
+
+function providersFor(
+  providers,
+  category
+) {
+  return providers
+    .filter(
+      p =>
+        p.enabled !== false &&
+        clean(p.category).toLowerCase() ===
+          category.toLowerCase()
+    );
+}
+
+/* =========================================================
+   API ROTATION
+========================================================= */
+
+/*
+  Every category has its own pointer.
+
+  Example:
+
+  Trending:
+  API 1 -> API 2 -> API 3 -> API 1
+
+  Prompt:
+  API 1 -> API 2 -> API 1
+
+  Photo:
+  API 1 -> API 2 -> API 3 -> API 1
+
+  If an API fails, the next enabled API
+  is tried automatically.
+*/
+
+const rotationState = {
+  trending_search: 0,
+  prompt_generate: 0,
+  photo_generate: 0
+};
+
+function nextIndex(category, total) {
+  if (!total) {
+    return 0;
+  }
+
+  const current =
+    rotationState[category] || 0;
+
+  return current % total;
+}
+
+function advanceRotation(
+  category,
+  total
+) {
+  if (!total) {
+    rotationState[category] = 0;
+    return;
+  }
+
+  const current =
+    rotationState[category] || 0;
+
+  rotationState[category] =
+    (current + 1) % total;
+}
+
+function orderedProviders(
+  providers,
+  category
+) {
+  const list = providersFor(
+    providers,
+    category
+  );
+
+  if (!list.length) {
+    return [];
+  }
+
+  const start = nextIndex(
+    category,
+    list.length
+  );
+
+  return [
+    ...list.slice(start),
+    ...list.slice(0, start)
+  ];
+}
+
+/* =========================================================
+   HTTP
+========================================================= */
+
+async function fetchText(
+  url,
+  options = {},
+  timeout = 30000
+) {
+  const controller =
+    new AbortController();
+
+  const timer = setTimeout(
+    () => controller.abort(),
+    timeout
+  );
+
+  try {
+    const response = await fetch(
+      url,
+      {
+        ...options,
+        signal:
+          options.signal ||
+          controller.signal
+      }
     );
 
-  const title =
-    generated.title ||
-    uniqueTitle(
-      `${category} AI Visual`,
-      await getPrompts()
+    const text =
+      await response.text();
+
+    if (!response.ok) {
+      throw new Error(
+        `HTTP ${response.status}: ${text.slice(
+          0,
+          500
+        )}`
+      );
+    }
+
+    return {
+      response,
+      text
+    };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function fetchJson(
+  url,
+  options = {},
+  timeout = 30000
+) {
+  const result =
+    await fetchText(
+      url,
+      options,
+      timeout
     );
 
-  const image =
-    await generateImage(
-      generated.imagePrompt
+  let json;
+
+  try {
+    json = JSON.parse(
+      result.text
     );
-
-  const uploaded =
-    await uploadToCloudinary(
-      image.buffer,
-      title
+  } catch {
+    throw new Error(
+      `Invalid JSON response from ${url}`
     );
-
-  const existing =
-    await getPrompts();
-
-  const finalTitle =
-    uniqueTitle(
-      title,
-      existing
-    );
-
-  const item =
-    await addPrompt({
-      id:
-        crypto.randomUUID(),
-
-      slug:
-        makeSlug(
-          finalTitle
-        ),
-
-      title:
-        finalTitle,
-
-      prompt:
-        generated.imagePrompt,
-
-      category:
-        generated.category ||
-        category,
-
-      media:
-        'Image',
-
-      imageUrl:
-        uploaded.secure_url,
-
-      model:
-        generated.model ||
-        image.model ||
-        'AI',
-
-      source:
-        'AI Visual Inspiration',
-
-      publishedAt:
-        new Date().toISOString()
-    });
+  }
 
   return {
-    ok: true,
-
-    added: 1,
-
-    item,
-
-    trendProvider:
-      trend.provider,
-
-    promptProvider:
-      generated.provider,
-
-    imageProvider:
-      image.provider,
-
-    cloudinaryUrl:
-      uploaded.secure_url
+    response: result.response,
+    json
   };
 }
 
-async function runAutomaticPosting() {
-  const settings =
-    await getSettings();
+async function fetchBinary(
+  url,
+  options = {},
+  timeout = 60000
+) {
+  const controller =
+    new AbortController();
 
-  const count =
-    Math.max(
-      1,
-      Math.min(
-        10,
-        Number(
-          settings?.postsPerRun || 1
-        )
-      )
+  const timer = setTimeout(
+    () => controller.abort(),
+    timeout
+  );
+
+  try {
+    const response = await fetch(
+      url,
+      {
+        ...options,
+        signal:
+          options.signal ||
+          controller.signal
+      }
     );
 
-  const results = [];
+    if (!response.ok) {
+      const text =
+        await response.text();
 
-  for (
-    let i = 0;
-    i < count;
-    i++
-  ) {
-    try {
-      const result =
-        await createAutomaticPost();
-
-      results.push(
-        result
+      throw new Error(
+        `HTTP ${response.status}: ${text.slice(
+          0,
+          500
+        )}`
       );
+    }
 
-    } catch (error) {
-      console.error(
-        '[AUTO ERROR]',
-        error.message
-      );
+    const buffer = Buffer.from(
+      await response.arrayBuffer()
+    );
 
-      results.push({
-        ok: false,
-        error:
-          error.message
-      });
+    return {
+      response,
+      buffer
+    };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/* =========================================================
+   RESPONSE PATH
+========================================================= */
+
+function getPath(
+  object,
+  pathString
+) {
+  if (!pathString) {
+    return object;
+  }
+
+  const parts =
+    String(pathString)
+      .replace(/\[(\d+)\]/g, ".$1")
+      .split(".")
+      .filter(Boolean);
+
+  let value = object;
+
+  for (const part of parts) {
+    if (
+      value === undefined ||
+      value === null
+    ) {
+      return undefined;
+    }
+
+    value = value[part];
+  }
+
+  return value;
+}
+
+function firstValue(
+  object,
+  paths
+) {
+  for (const p of paths) {
+    const value = getPath(
+      object,
+      p
+    );
+
+    if (
+      value !== undefined &&
+      value !== null &&
+      value !== ""
+    ) {
+      return value;
     }
   }
 
-  const added =
-    results.filter(
-      x => x.ok
-    ).length;
+  return undefined;
+}
+
+/* =========================================================
+   TEMPLATE ENGINE FOR CUSTOM API
+========================================================= */
+
+function templateValue(
+  value,
+  context
+) {
+  if (
+    typeof value === "string"
+  ) {
+    return value
+      .replace(
+        /\{\{\s*apiKey\s*\}\}/gi,
+        clean(context.apiKey)
+      )
+      .replace(
+        /\{\{\s*prompt\s*\}\}/gi,
+        clean(context.prompt)
+      )
+      .replace(
+        /\{\{\s*topic\s*\}\}/gi,
+        clean(context.topic)
+      )
+      .replace(
+        /\{\{\s*title\s*\}\}/gi,
+        clean(context.title)
+      )
+      .replace(
+        /\{\{\s*category\s*\}\}/gi,
+        clean(context.category)
+      );
+  }
+
+  if (
+    Array.isArray(value)
+  ) {
+    return value.map(
+      x =>
+        templateValue(
+          x,
+          context
+        )
+    );
+  }
+
+  if (
+    value &&
+    typeof value === "object"
+  ) {
+    const result = {};
+
+    for (const [
+      key,
+      val
+    ] of Object.entries(value)) {
+      result[key] =
+        templateValue(
+          val,
+          context
+        );
+    }
+
+    return result;
+  }
+
+  return value;
+}
+
+function parseJsonConfig(
+  value,
+  fallback
+) {
+  if (
+    value &&
+    typeof value === "object"
+  ) {
+    return value;
+  }
+
+  if (!value) {
+    return fallback;
+  }
+
+  try {
+    return JSON.parse(value);
+  } catch {
+    return fallback;
+  }
+}
+
+/* =========================================================
+   CUSTOM API REQUEST
+========================================================= */
+
+async function callCustomAPI(
+  provider,
+  context = {}
+) {
+  const config =
+    provider.config || {};
+
+  const endpoint =
+    clean(
+      config.endpoint ||
+        config.url
+    );
+
+  if (!endpoint) {
+    throw new Error(
+      `${provider.providerName}: Custom API endpoint is missing`
+    );
+  }
+
+  const method =
+    clean(
+      config.method,
+      "GET"
+    ).toUpperCase();
+
+  const headers = {
+    Accept:
+      "application/json",
+    ...(parseJsonConfig(
+      config.headers,
+      {}
+    ) || {})
+  };
+
+  const authType =
+    clean(
+      config.authType ||
+        config.authentication ||
+        "none"
+    ).toLowerCase();
+
+  const apiKey =
+    clean(
+      provider.apiKey
+    );
+
+  if (
+    apiKey &&
+    (
+      authType === "bearer" ||
+      authType === "bearer_token"
+    )
+  ) {
+    headers.Authorization =
+      `Bearer ${apiKey}`;
+  }
+
+  if (
+    apiKey &&
+    (
+      authType === "x-api-key" ||
+      authType === "api-key" ||
+      authType === "apikey"
+    )
+  ) {
+    headers["X-API-Key"] =
+      apiKey;
+  }
+
+  const finalHeaders =
+    templateValue(
+      headers,
+      {
+        ...context,
+        apiKey
+      }
+    );
+
+  let finalUrl =
+    templateValue(
+      endpoint,
+      {
+        ...context,
+        apiKey
+      }
+    );
+
+  const bodyConfig =
+    config.body || {};
+
+  let body;
+
+  if (
+    method !== "GET" &&
+    method !== "HEAD"
+  ) {
+    const finalBody =
+      templateValue(
+        bodyConfig,
+        {
+          ...context,
+          apiKey
+        }
+      );
+
+    if (
+      typeof finalBody ===
+      "string"
+    ) {
+      body = finalBody;
+
+      if (
+        !finalHeaders[
+          "Content-Type"
+        ]
+      ) {
+        finalHeaders[
+          "Content-Type"
+        ] =
+          "application/json";
+      }
+    } else {
+      body =
+        JSON.stringify(
+          finalBody
+        );
+
+      if (
+        !finalHeaders[
+          "Content-Type"
+        ]
+      ) {
+        finalHeaders[
+          "Content-Type"
+        ] =
+          "application/json";
+      }
+    }
+  }
+
+  /*
+    Optional GET query parameters
+  */
+
+  if (
+    method === "GET" &&
+    config.query
+  ) {
+    const query =
+      templateValue(
+        config.query,
+        {
+          ...context,
+          apiKey
+        }
+      );
+
+    const url =
+      new URL(finalUrl);
+
+    for (const [
+      key,
+      value
+    ] of Object.entries(
+      query || {}
+    )) {
+      if (
+        value !== undefined &&
+        value !== null
+      ) {
+        url.searchParams.set(
+          key,
+          String(value)
+        );
+      }
+    }
+
+    finalUrl =
+      url.toString();
+  }
+
+  const result =
+    await fetchJson(
+      finalUrl,
+      {
+        method,
+        headers:
+          finalHeaders,
+        body
+      },
+      45000
+    );
+
+  return result.json;
+}
+
+/* =========================================================
+   NEWS DATA
+========================================================= */
+
+async function callNewsData(
+  provider,
+  topic
+) {
+  const apiKey =
+    clean(provider.apiKey);
+
+  if (!apiKey) {
+    throw new Error(
+      "NewsData.io API key missing"
+    );
+  }
+
+  const url =
+    new URL(
+      "https://newsdata.io/api/1/latest"
+    );
+
+  url.searchParams.set(
+    "apikey",
+    apiKey
+  );
+
+  url.searchParams.set(
+    "language",
+    "en"
+  );
+
+  if (topic) {
+    url.searchParams.set(
+      "q",
+      topic
+    );
+  }
+
+  const {
+    json
+  } = await fetchJson(
+    url.toString()
+  );
+
+  const results =
+    Array.isArray(
+      json.results
+    )
+      ? json.results
+      : [];
+
+  return results.map(
+    item => ({
+      title:
+        item.title ||
+        item.name ||
+        "Trending Topic",
+
+      description:
+        item.description ||
+        item.content ||
+        "",
+
+      url:
+        item.link ||
+        item.url ||
+        "",
+
+      source:
+        item.source_name ||
+        "NewsData.io",
+
+      publishedAt:
+        item.pubDate ||
+        new Date().toISOString()
+    })
+  );
+}
+
+/* =========================================================
+   GNEWS
+========================================================= */
+
+async function callGNews(
+  provider,
+  topic
+) {
+  const apiKey =
+    clean(provider.apiKey);
+
+  if (!apiKey) {
+    throw new Error(
+      "GNews API key missing"
+    );
+  }
+
+  const url =
+    new URL(
+      "https://gnews.io/api/v4/top-headlines"
+    );
+
+  url.searchParams.set(
+    "apikey",
+    apiKey
+  );
+
+  url.searchParams.set(
+    "lang",
+    "en"
+  );
+
+  url.searchParams.set(
+    "max",
+    "10"
+  );
+
+  if (topic) {
+    url.searchParams.set(
+      "q",
+      topic
+    );
+  }
+
+  const {
+    json
+  } = await fetchJson(
+    url.toString()
+  );
+
+  const articles =
+    Array.isArray(
+      json.articles
+    )
+      ? json.articles
+      : [];
+
+  return articles.map(
+    item => ({
+      title:
+        item.title ||
+        "Trending Topic",
+
+      description:
+        item.description ||
+        item.content ||
+        "",
+
+      url:
+        item.url ||
+        "",
+
+      source:
+        item.source?.name ||
+        "GNews",
+
+      publishedAt:
+        item.publishedAt ||
+        new Date().toISOString()
+    })
+  );
+}
+
+/* =========================================================
+   REDDIT
+========================================================= */
+
+async function callReddit(
+  provider,
+  topic
+) {
+  const query =
+    clean(
+      topic,
+      "trending"
+    );
+
+  const url =
+    new URL(
+      "https://www.reddit.com/search.json"
+    );
+
+  url.searchParams.set(
+    "q",
+    query
+  );
+
+  url.searchParams.set(
+    "sort",
+    "hot"
+  );
+
+  url.searchParams.set(
+    "limit",
+    "15"
+  );
+
+  const {
+    json
+  } = await fetchJson(
+    url.toString(),
+    {
+      headers: {
+        "User-Agent":
+          "PromptForge/1.0"
+      }
+    }
+  );
+
+  const children =
+    json?.data?.children ||
+    [];
+
+  return children
+    .map(
+      item =>
+        item?.data
+    )
+    .filter(Boolean)
+    .map(
+      item => ({
+        title:
+          item.title ||
+          "Reddit Trend",
+
+        description:
+          item.selftext ||
+          "",
+
+        url:
+          item.permalink
+            ? `https://www.reddit.com${item.permalink}`
+            : "",
+
+        source:
+          "Reddit",
+
+        publishedAt:
+          item.created_utc
+            ? new Date(
+                item.created_utc *
+                  1000
+              ).toISOString()
+            : new Date().toISOString()
+      })
+    );
+}
+
+/* =========================================================
+   YOUTUBE
+========================================================= */
+
+async function callYouTube(
+  provider,
+  topic
+) {
+  const apiKey =
+    clean(provider.apiKey);
+
+  if (!apiKey) {
+    throw new Error(
+      "YouTube API key missing"
+    );
+  }
+
+  const url =
+    new URL(
+      "https://www.googleapis.com/youtube/v3/search"
+    );
+
+  url.searchParams.set(
+    "part",
+    "snippet"
+  );
+
+  url.searchParams.set(
+    "type",
+    "video"
+  );
+
+  url.searchParams.set(
+    "order",
+    "viewCount"
+  );
+
+  url.searchParams.set(
+    "maxResults",
+    "15"
+  );
+
+  url.searchParams.set(
+    "key",
+    apiKey
+  );
+
+  if (topic) {
+    url.searchParams.set(
+      "q",
+      topic
+    );
+  }
+
+  const {
+    json
+  } = await fetchJson(
+    url.toString()
+  );
+
+  return (
+    json.items || []
+  ).map(
+    item => ({
+      title:
+        item.snippet?.title ||
+        "YouTube Trend",
+
+      description:
+        item.snippet?.description ||
+        "",
+
+      url:
+        item.id?.videoId
+          ? `https://www.youtube.com/watch?v=${item.id.videoId}`
+          : "",
+
+      source:
+        "YouTube",
+
+      publishedAt:
+        item.snippet?.publishedAt ||
+        new Date().toISOString()
+    })
+  );
+}
+
+/* =========================================================
+   X / TWITTER
+========================================================= */
+
+async function callX(
+  provider,
+  topic
+) {
+  const token =
+    clean(provider.apiKey);
+
+  if (!token) {
+    throw new Error(
+      "X/Twitter Bearer token missing"
+    );
+  }
+
+  const query =
+    clean(
+      topic,
+      "AI OR photography OR technology"
+    );
+
+  const url =
+    new URL(
+      "https://api.x.com/2/tweets/search/recent"
+    );
+
+  url.searchParams.set(
+    "query",
+    `${query} -is:retweet`
+  );
+
+  url.searchParams.set(
+    "max_results",
+    "20"
+  );
+
+  url.searchParams.set(
+    "tweet.fields",
+    "created_at,text,author_id"
+  );
+
+  const {
+    json
+  } = await fetchJson(
+    url.toString(),
+    {
+      headers: {
+        Authorization:
+          `Bearer ${token}`
+      }
+    }
+  );
+
+  return (
+    json.data || []
+  ).map(
+    item => ({
+      title:
+        item.text?.slice(
+          0,
+          140
+        ) ||
+        "X Trend",
+
+      description:
+        item.text || "",
+
+      url:
+        `https://x.com/i/web/status/${item.id}`,
+
+      source:
+        "X/Twitter",
+
+      publishedAt:
+        item.created_at ||
+        new Date().toISOString()
+    })
+  );
+}
+
+/* =========================================================
+   BLUESKY
+========================================================= */
+
+async function callBluesky(
+  provider,
+  topic
+) {
+  const query =
+    clean(
+      topic,
+      "AI"
+    );
+
+  const url =
+    new URL(
+      "https://public.api.bsky.app/xrpc/app.bsky.feed.searchPosts"
+    );
+
+  url.searchParams.set(
+    "q",
+    query
+  );
+
+  url.searchParams.set(
+    "limit",
+    "20"
+  );
+
+  const {
+    json
+  } = await fetchJson(
+    url.toString()
+  );
+
+  return (
+    json.posts || []
+  ).map(
+    item => ({
+      title:
+        item.record?.text?.slice(
+          0,
+          140
+        ) ||
+        "Bluesky Trend",
+
+      description:
+        item.record?.text ||
+        "",
+
+      url:
+        item.uri || "",
+
+      source:
+        "Bluesky",
+
+      publishedAt:
+        item.record?.createdAt ||
+        new Date().toISOString()
+    })
+  );
+}
+
+/* =========================================================
+   TRENDING PROVIDER DISPATCHER
+========================================================= */
+
+async function callTrendingProvider(
+  provider,
+  topic
+) {
+  if (
+    providerNameMatches(
+      provider,
+      ["NewsData.io", "NewsData"]
+    )
+  ) {
+    return callNewsData(
+      provider,
+      topic
+    );
+  }
+
+  if (
+    providerNameMatches(
+      provider,
+      ["GNews"]
+    )
+  ) {
+    return callGNews(
+      provider,
+      topic
+    );
+  }
+
+  if (
+    providerNameMatches(
+      provider,
+      ["Reddit"]
+    )
+  ) {
+    return callReddit(
+      provider,
+      topic
+    );
+  }
+
+  if (
+    providerNameMatches(
+      provider,
+      ["YouTube"]
+    )
+  ) {
+    return callYouTube(
+      provider,
+      topic
+    );
+  }
+
+  if (
+    providerNameMatches(
+      provider,
+      ["X/Twitter", "Twitter", "X"]
+    )
+  ) {
+    return callX(
+      provider,
+      topic
+    );
+  }
+
+  if (
+    providerNameMatches(
+      provider,
+      ["Bluesky"]
+    )
+  ) {
+    return callBluesky(
+      provider,
+      topic
+    );
+  }
+
+  return callCustomAPI(
+    provider,
+    {
+      topic,
+      category:
+        "trending_search"
+    }
+  ).then(
+    json =>
+      normalizeTrendingCustom(
+        json,
+        provider
+      )
+  );
+}
+
+/* =========================================================
+   CUSTOM TREND NORMALIZER
+========================================================= */
+
+function normalizeTrendingCustom(
+  json,
+  provider
+) {
+  const config =
+    provider.config || {};
+
+  const configuredPath =
+    clean(
+      config.responsePath ||
+        config.resultsPath
+    );
+
+  let data =
+    configuredPath
+      ? getPath(
+          json,
+          configuredPath
+        )
+      : firstValue(
+          json,
+          [
+            "results",
+            "articles",
+            "items",
+            "data",
+            "posts",
+            "news"
+          ]
+        );
+
+  if (!data) {
+    data = json;
+  }
+
+  if (!Array.isArray(data)) {
+    data = [data];
+  }
+
+  return data
+    .filter(Boolean)
+    .map(
+      item => ({
+        title:
+          clean(
+            firstValue(
+              item,
+              [
+                config.titlePath ||
+                  "",
+                "title",
+                "name",
+                "text"
+              ]
+            )
+          ) ||
+          "Trending Topic",
+
+        description:
+          clean(
+            firstValue(
+              item,
+              [
+                config.descriptionPath ||
+                  "",
+                "description",
+                "content",
+                "summary",
+                "text"
+              ]
+            )
+          ),
+
+        url:
+          httpUrl(
+            firstValue(
+              item,
+              [
+                config.urlPath ||
+                  "",
+                "url",
+                "link",
+                "permalink"
+              ]
+            )
+          ),
+
+        source:
+          clean(
+            firstValue(
+              item,
+              [
+                config.sourcePath ||
+                  "",
+                "source",
+                "source_name"
+              ]
+            )
+          ) ||
+          provider.providerName,
+
+        publishedAt:
+          firstValue(
+            item,
+            [
+              config.datePath ||
+                "",
+              "publishedAt",
+              "published_at",
+              "created_at",
+              "date"
+            ]
+          ) ||
+          new Date().toISOString()
+      })
+    );
+}
+
+/* =========================================================
+   CREATIVE SEEDS
+========================================================= */
+
+const CREATIVE_SEEDS = [
+  {
+    category:
+      "Portrait Photography",
+    seed:
+      "luxury editorial portrait"
+  },
+  {
+    category:
+      "Fashion Photography",
+    seed:
+      "premium fashion campaign"
+  },
+  {
+    category:
+      "Commercial Photography",
+    seed:
+      "cinematic commercial campaign"
+  },
+  {
+    category:
+      "Product Photography",
+    seed:
+      "minimal product photography"
+  },
+  {
+    category:
+      "Brand Design",
+    seed:
+      "premium brand campaign"
+  },
+  {
+    category:
+      "Architecture",
+    seed:
+      "futuristic architecture"
+  },
+  {
+    category:
+      "Interior Design",
+    seed:
+      "modern luxury interior"
+  },
+  {
+    category:
+      "Travel Photography",
+    seed:
+      "cinematic travel destination"
+  },
+  {
+    category:
+      "Nature Photography",
+    seed:
+      "dreamlike natural landscape"
+  },
+  {
+    category:
+      "Cinematic Photography",
+    seed:
+      "cinematic night scene"
+  },
+  {
+    category:
+      "Automotive",
+    seed:
+      "luxury automotive campaign"
+  },
+  {
+    category:
+      "Food Photography",
+    seed:
+      "creative food photography"
+  },
+  {
+    category:
+      "Editorial",
+    seed:
+      "editorial lifestyle photography"
+  },
+  {
+    category:
+      "Fantasy Art",
+    seed:
+      "fantasy cinematic environment"
+  },
+  {
+    category:
+      "Digital Art",
+    seed:
+      "surreal digital artwork"
+  },
+  {
+    category:
+      "Graphic Design",
+    seed:
+      "modern graphic design poster"
+  },
+  {
+    category:
+      "Lifestyle",
+    seed:
+      "editorial lifestyle photography"
+  },
+  {
+    category:
+      "Luxury",
+    seed:
+      "high-end luxury campaign"
+  },
+  {
+    category:
+      "Minimalist",
+    seed:
+      "minimalist studio photography"
+  },
+  {
+    category:
+      "Surreal Art",
+    seed:
+      "surreal fine art portrait"
+  }
+];
+
+function randomSeed() {
+  return CREATIVE_SEEDS[
+    Math.floor(
+      Math.random() *
+        CREATIVE_SEEDS.length
+    )
+  ];
+}
+
+/* =========================================================
+   GEMINI
+========================================================= */
+
+function extractGeminiText(
+  json
+) {
+  return (
+    json?.candidates?.[0]
+      ?.content?.parts
+      ?.map(x => x.text || "")
+      .join("\n")
+      .trim() || ""
+  );
+}
+
+function parseJsonFromText(
+  text
+) {
+  const cleaned =
+    String(text || "")
+      .replace(
+        /^```json\s*/i,
+        ""
+      )
+      .replace(
+        /^```\s*/i,
+        ""
+      )
+      .replace(
+        /```$/i,
+        ""
+      )
+      .trim();
+
+  try {
+    return JSON.parse(
+      cleaned
+    );
+  } catch {}
+
+  const start =
+    cleaned.indexOf("{");
+
+  const end =
+    cleaned.lastIndexOf("}");
+
+  if (
+    start >= 0 &&
+    end > start
+  ) {
+    try {
+      return JSON.parse(
+        cleaned.slice(
+          start,
+          end + 1
+        )
+      );
+    } catch {}
+  }
+
+  return null;
+}
+
+async function callGemini(
+  provider,
+  context
+) {
+  const apiKey =
+    clean(provider.apiKey);
+
+  if (!apiKey) {
+    throw new Error(
+      "Gemini API key missing"
+    );
+  }
+
+  const model =
+    clean(
+      provider.config?.model,
+      "gemini-3.5-flash-lite"
+    );
+
+  const endpoint =
+    `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(
+      model
+    )}:generateContent?key=${encodeURIComponent(
+      apiKey
+    )}`;
+
+  const seed =
+    context.seed ||
+    "premium AI visual concept";
+
+  const trend =
+    context.trend ||
+    "";
+
+  const prompt = `
+You are a professional creative director for an AI visual prompt website.
+
+Create ONE original visual concept.
+
+Category:
+${context.category}
+
+Creative seed:
+${seed}
+
+Optional trend signal:
+${trend}
+
+Return ONLY valid JSON in this exact format:
+
+{
+  "title": "short premium title",
+  "prompt": "detailed image generation prompt",
+  "category": "category name"
+}
+
+The image prompt must describe:
+subject, composition, camera, lens, lighting,
+materials/textures, environment, atmosphere,
+color grading, depth, realism and professional
+photography/art direction.
+
+Do not mention copyrighted characters.
+Do not copy an existing artwork.
+Do not include explanations outside JSON.
+`;
+
+  const {
+    json
+  } = await fetchJson(
+    endpoint,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type":
+          "application/json"
+      },
+      body: JSON.stringify({
+        contents: [
+          {
+            parts: [
+              {
+                text: prompt
+              }
+            ]
+          }
+        ],
+        generationConfig: {
+          temperature: 0.9,
+          maxOutputTokens: 1800
+        }
+      })
+    },
+    60000
+  );
+
+  const text =
+    extractGeminiText(json);
+
+  if (!text) {
+    throw new Error(
+      "Gemini returned empty response"
+    );
+  }
+
+  const parsed =
+    parseJsonFromText(text);
+
+  if (!parsed) {
+    throw new Error(
+      "Gemini returned invalid JSON"
+    );
+  }
+
+  if (
+    !parsed.title ||
+    !parsed.prompt
+  ) {
+    throw new Error(
+      "Gemini response missing title/prompt"
+    );
+  }
 
   return {
-    ok:
-      added > 0,
+    title:
+      uniqueTitle(
+        parsed.title
+      ),
 
-    added,
+    prompt:
+      clean(
+        parsed.prompt
+      ),
 
-    results
+    category:
+      clean(
+        parsed.category,
+        context.category
+      )
   };
 }
+
+/* =========================================================
+   CUSTOM PROMPT PROVIDER
+========================================================= */
+
+function normalizeCustomPrompt(
+  json,
+  provider,
+  context
+) {
+  const config =
+    provider.config || {};
+
+  const root =
+    config.responsePath
+      ? getPath(
+          json,
+          config.responsePath
+        )
+      : json;
+
+  const title =
+    clean(
+      firstValue(
+        root,
+        [
+          config.titlePath ||
+            "",
+          "title",
+          "name"
+        ]
+      )
+    ) ||
+    `${context.category} Concept`;
+
+  const prompt =
+    clean(
+      firstValue(
+        root,
+        [
+          config.promptPath ||
+            "",
+          "prompt",
+          "text",
+          "content",
+          "output",
+          "response"
+        ]
+      )
+    );
+
+  if (!prompt) {
+    throw new Error(
+      `${provider.providerName}: prompt field not found in response`
+    );
+  }
+
+  return {
+    title,
+    prompt,
+    category:
+      clean(
+        firstValue(
+          root,
+          [
+            config.categoryPath ||
+              "",
+            "category"
+          ]
+        )
+      ) ||
+      context.category
+  };
+}
+
+async function callPromptProvider(
+  provider,
+  context
+) {
+  if (
+    providerNameMatches(
+      provider,
+      ["Gemini"]
+    )
+  ) {
+    return callGemini(
+      provider,
+      context
+    );
+  }
+
+  const json =
+    await callCustomAPI(
+      provider,
+      {
+        ...context,
+        category:
+          "prompt_generate"
+      }
+    );
+
+  return normalizeCustomPrompt(
+    json,
+    provider,
+    context
+  );
+}
+
+/* =========================================================
+   POLLINATIONS
+========================================================= */
+
+async function callPollinations(
+  provider,
+  prompt
+) {
+  const encoded =
+    encodeURIComponent(
+      prompt
+    );
+
+  const seed =
+    Math.floor(
+      Math.random() *
+        1000000000
+    );
+
+  const model =
+    clean(
+      provider.config?.model,
+      "flux"
+    );
+
+  const url =
+    `https://image.pollinations.ai/prompt/${encoded}?model=${encodeURIComponent(
+      model
+    )}&width=1024&height=1024&nologo=true&seed=${seed}`;
+
+  return {
+    imageUrl: url,
+    model:
+      "Pollinations"
+  };
+}
+
+/* =========================================================
+   HUGGING FACE
+========================================================= */
+
+async function callHuggingFace(
+  provider,
+  prompt
+) {
+  const token =
+    clean(provider.apiKey);
+
+  if (!token) {
+    throw new Error(
+      "Hugging Face API key missing"
+    );
+  }
+
+  const model =
+    clean(
+      provider.config?.model,
+      "black-forest-labs/FLUX.1-schnell"
+    );
+
+  const endpoint =
+    `https://api-inference.huggingface.co/models/${encodeURIComponent(
+      model
+    )}`;
+
+  const {
+    buffer
+  } = await fetchBinary(
+    endpoint,
+    {
+      method: "POST",
+
+      headers: {
+        Authorization:
+          `Bearer ${token}`,
+        "Content-Type":
+          "application/json"
+      },
+
+      body: JSON.stringify({
+        inputs: prompt
+      })
+    },
+    120000
+  );
+
+  return {
+    buffer,
+    model:
+      `Hugging Face / ${model}`
+  };
+}
+
+/* =========================================================
+   CUSTOM IMAGE API
+========================================================= */
+
+async function callCustomImage(
+  provider,
+  prompt
+) {
+  const json =
+    await callCustomAPI(
+      provider,
+      {
+        prompt,
+        category:
+          "photo_generate"
+      }
+    );
+
+  const config =
+    provider.config || {};
+
+  const root =
+    config.responsePath
+      ? getPath(
+          json,
+          config.responsePath
+        )
+      : json;
+
+  const imageUrl =
+    httpUrl(
+      firstValue(
+        root,
+        [
+          config.imagePath ||
+            "",
+          "imageUrl",
+          "image_url",
+          "url",
+          "output",
+          "image"
+        ]
+      )
+    );
+
+  if (imageUrl) {
+    return {
+      imageUrl,
+      model:
+        provider.providerName
+    };
+  }
+
+  const base64 =
+    firstValue(
+      root,
+      [
+        config.base64Path ||
+          "",
+        "base64",
+        "image_base64",
+        "b64_json"
+      ]
+    );
+
+  if (
+    base64 &&
+    typeof base64 === "string"
+  ) {
+    let data =
+      base64;
+
+    if (
+      !data.startsWith(
+        "data:image"
+      )
+    ) {
+      data =
+        `data:image/png;base64,${data}`;
+    }
+
+    return {
+      dataUrl: data,
+      model:
+        provider.providerName
+    };
+  }
+
+  throw new Error(
+    `${provider.providerName}: image URL/base64 not found in response`
+  );
+}
+
+/* =========================================================
+   IMAGE PROVIDER DISPATCH
+========================================================= */
+
+async function callImageProvider(
+  provider,
+  prompt
+) {
+  if (
+    providerNameMatches(
+      provider,
+      ["Pollinations"]
+    )
+  ) {
+    return callPollinations(
+      provider,
+      prompt
+    );
+  }
+
+  if (
+    providerNameMatches(
+      provider,
+      [
+        "Hugging Face",
+        "HuggingFace"
+      ]
+    )
+  ) {
+    return callHuggingFace(
+      provider,
+      prompt
+    );
+  }
+
+  return callCustomImage(
+    provider,
+    prompt
+  );
+}
+
+/* =========================================================
+   CLOUDINARY UPLOAD
+========================================================= */
+
+async function uploadToCloudinary(
+  source
+) {
+  if (!cloudinaryEnabled) {
+    return {
+      url:
+        typeof source === "string"
+          ? source
+          : "",
+      publicId: ""
+    };
+  }
+
+  if (
+    typeof source === "string" &&
+    /^https?:\/\//i.test(
+      source
+    )
+  ) {
+    const result =
+      await cloudinary.uploader.upload(
+        source,
+        {
+          folder:
+            "promptforge/generated",
+          resource_type:
+            "image"
+        }
+      );
+
+    return {
+      url:
+        result.secure_url,
+      publicId:
+        result.public_id
+    };
+  }
+
+  if (
+    Buffer.isBuffer(source)
+  ) {
+    const result =
+      await new Promise(
+        (
+          resolve,
+          reject
+        ) => {
+          const stream =
+            cloudinary.uploader.upload_stream(
+              {
+                folder:
+                  "promptforge/generated",
+                resource_type:
+                  "image"
+              },
+              (
+                error,
+                result
+              ) => {
+                if (error) {
+                  reject(error);
+                } else {
+                  resolve(
+                    result
+                  );
+                }
+              }
+            );
+
+          stream.end(source);
+        }
+      );
+
+    return {
+      url:
+        result.secure_url,
+      publicId:
+        result.public_id
+    };
+  }
+
+  throw new Error(
+    "Unsupported image source"
+  );
+}
+
+/* =========================================================
+   IMAGE SOURCE TO CLOUDINARY
+========================================================= */
+
+async function storeGeneratedImage(
+  result
+) {
+  if (result.imageUrl) {
+    return uploadToCloudinary(
+      result.imageUrl
+    );
+  }
+
+  if (result.dataUrl) {
+    if (!cloudinaryEnabled) {
+      return {
+        url:
+          result.dataUrl,
+        publicId: ""
+      };
+    }
+
+    const uploaded =
+      await cloudinary.uploader.upload(
+        result.dataUrl,
+        {
+          folder:
+            "promptforge/generated",
+          resource_type:
+            "image"
+        }
+      );
+
+    return {
+      url:
+        uploaded.secure_url,
+      publicId:
+        uploaded.public_id
+    };
+  }
+
+  if (result.buffer) {
+    return uploadToCloudinary(
+      result.buffer
+    );
+  }
+
+  throw new Error(
+    "Image provider returned no usable image"
+  );
+}
+
+/* =========================================================
+   TREND FETCH WITH ROTATION + FALLBACK
+========================================================= */
+
+async function getTrendingTopic(
+  providers
+) {
+  const list =
+    orderedProviders(
+      providers,
+      "trending_search"
+    );
+
+  if (!list.length) {
+    console.log(
+      "[AUTO] No trending API configured. Using creative seed."
+    );
+
+    const seed =
+      randomSeed();
+
+    return {
+      topic:
+        seed.seed,
+      title:
+        seed.seed,
+      source:
+        "Creative Seed",
+      category:
+        seed.category
+    };
+  }
+
+  const errors = [];
+
+  for (
+    let i = 0;
+    i < list.length;
+    i++
+  ) {
+    const provider =
+      list[i];
+
+    try {
+      const items =
+        await callTrendingProvider(
+          provider,
+          ""
+        );
+
+      if (
+        !Array.isArray(items) ||
+        !items.length
+      ) {
+        throw new Error(
+          "No trend results"
+        );
+      }
+
+      /*
+        Successful provider becomes
+        the current provider for this
+        category, and next run moves
+        to the next provider.
+      */
+
+      const globalList =
+        providersFor(
+          providers,
+          "trending_search"
+        );
+
+      const position =
+        globalList.findIndex(
+          p =>
+            String(p.id) ===
+            String(provider.id)
+        );
+
+      if (position >= 0) {
+        rotationState.trending_search =
+          (position + 1) %
+          globalList.length;
+      }
+
+      const item =
+        items[
+          Math.floor(
+            Math.random() *
+              items.length
+          )
+        ];
+
+      return {
+        topic:
+          item.title ||
+          "creative visual",
+        title:
+          item.title ||
+          "Trending Visual",
+        description:
+          item.description ||
+          "",
+        source:
+          item.source ||
+          provider.providerName,
+        sourceUrl:
+          item.url ||
+          "",
+        category:
+          randomSeed().category
+      };
+    } catch (error) {
+      console.error(
+        `[AUTO] Trending ${provider.providerName} failed:`,
+        error.message
+      );
+
+      errors.push(
+        `${provider.providerName}: ${error.message}`
+      );
+
+      continue;
+    }
+  }
+
+  console.warn(
+    "[AUTO] All trending APIs failed. Using creative seed."
+  );
+
+  const seed =
+    randomSeed();
+
+  return {
+    topic:
+      seed.seed,
+    title:
+      seed.seed,
+    source:
+      "Creative Seed",
+    category:
+      seed.category,
+    errors
+  };
+}
+
+/* =========================================================
+   PROMPT GENERATION WITH ROTATION
+========================================================= */
+
+async function generatePrompt(
+  providers,
+  context
+) {
+  const list =
+    orderedProviders(
+      providers,
+      "prompt_generate"
+    );
+
+  if (!list.length) {
+    throw new Error(
+      "No Prompt Generate API configured."
+    );
+  }
+
+  const errors = [];
+
+  for (
+    let i = 0;
+    i < list.length;
+    i++
+  ) {
+    const provider =
+      list[i];
+
+    try {
+      console.log(
+        `[AUTO] Prompt Generate: trying ${provider.providerName}`
+      );
+
+      const result =
+        await callPromptProvider(
+          provider,
+          context
+        );
+
+      const globalList =
+        providersFor(
+          providers,
+          "prompt_generate"
+        );
+
+      const position =
+        globalList.findIndex(
+          p =>
+            String(p.id) ===
+            String(provider.id)
+        );
+
+      if (position >= 0) {
+        rotationState.prompt_generate =
+          (position + 1) %
+          globalList.length;
+      }
+
+      return {
+        ...result,
+        provider:
+          provider.providerName
+      };
+    } catch (error) {
+      console.error(
+        `[AUTO] Prompt Generate ${provider.providerName} failed:`,
+        error.message
+      );
+
+      errors.push(
+        `${provider.providerName}: ${error.message}`
+      );
+    }
+  }
+
+  throw new Error(
+    `All Prompt Generate APIs failed: ${errors.join(
+      " | "
+    )}`
+  );
+}
+
+/* =========================================================
+   IMAGE GENERATION WITH ROTATION
+========================================================= */
+
+async function generateImage(
+  providers,
+  prompt
+) {
+  const list =
+    orderedProviders(
+      providers,
+      "photo_generate"
+    );
+
+  if (!list.length) {
+    throw new Error(
+      "No Photo Generate API configured."
+    );
+  }
+
+  const errors = [];
+
+  for (
+    let i = 0;
+    i < list.length;
+    i++
+  ) {
+    const provider =
+      list[i];
+
+    try {
+      console.log(
+        `[AUTO] Image Generate: trying ${provider.providerName}`
+      );
+
+      const result =
+        await callImageProvider(
+          provider,
+          prompt
+        );
+
+      const globalList =
+        providersFor(
+          providers,
+          "photo_generate"
+        );
+
+      const position =
+        globalList.findIndex(
+          p =>
+            String(p.id) ===
+            String(provider.id)
+        );
+
+      if (position >= 0) {
+        rotationState.photo_generate =
+          (position + 1) %
+          globalList.length;
+      }
+
+      return {
+        ...result,
+        provider:
+          provider.providerName
+      };
+    } catch (error) {
+      console.error(
+        `[AUTO] Image Generate ${provider.providerName} failed:`,
+        error.message
+      );
+
+      errors.push(
+        `${provider.providerName}: ${error.message}`
+      );
+    }
+  }
+
+  throw new Error(
+    `All Photo Generate APIs failed: ${errors.join(
+      " | "
+    )}`
+  );
+}
+
+/* =========================================================
+   AUTO POST
+========================================================= */
+
+let postingNow = false;
+
+async function createAutomaticPost() {
+  if (postingNow) {
+    return {
+      ok: false,
+      reason:
+        "Another automatic post is already running."
+    };
+  }
+
+  postingNow = true;
+
+  try {
+    const settings =
+      await getSettings();
+
+    if (
+      settings.autoPost === false
+    ) {
+      return {
+        ok: false,
+        reason:
+          "Automatic posting is disabled."
+      };
+    }
+
+    const providers =
+      await getProviders();
+
+    console.log(
+      "[AUTO] Starting automatic post..."
+    );
+
+    /*
+      STEP 1
+      Trending / social signal
+    */
+
+    const trend =
+      await getTrendingTopic(
+        providers
+      );
+
+    console.log(
+      `[AUTO] Trending signal: ${trend.topic}`
+    );
+
+    /*
+      STEP 2
+      Choose creative category
+    */
+
+    const seed =
+      randomSeed();
+
+    const category =
+      seed.category;
+
+    /*
+      STEP 3
+      Gemini/custom prompt API
+    */
+
+    const generated =
+      await generatePrompt(
+        providers,
+        {
+          trend:
+            trend.title ||
+            trend.topic ||
+            "",
+          seed:
+            seed.seed,
+          category
+        }
+      );
+
+    console.log(
+      `[AUTO] Prompt created by ${generated.provider}`
+    );
+
+    /*
+      STEP 4
+      Photo/image API
+    */
+
+    const image =
+      await generateImage(
+        providers,
+        generated.prompt
+      );
+
+    console.log(
+      `[AUTO] Image created by ${image.provider}`
+    );
+
+    /*
+      STEP 5
+      Cloudinary
+    */
+
+    const stored =
+      await storeGeneratedImage(
+        image
+      );
+
+    console.log(
+      `[AUTO] Image stored: ${stored.url}`
+    );
+
+    /*
+      STEP 6
+      Save post to Supabase
+    */
+
+    const title =
+      uniqueTitle(
+        generated.title ||
+          trend.title ||
+          `${category} Visual`
+      );
+
+    const saved =
+      await addPrompt({
+        slug:
+          slugify(title) +
+          "-" +
+          Date.now()
+            .toString(36),
+
+        title,
+
+        prompt:
+          generated.prompt,
+
+        category:
+          generated.category ||
+          category,
+
+        media:
+          "Image",
+
+        imageUrl:
+          stored.url,
+
+        model:
+          image.model ||
+          image.provider ||
+          "AI",
+
+        source:
+          `AI Visual Inspiration · ${generated.provider} · ${image.provider}`
+      });
+
+    console.log(
+      `[AUTO] Published: ${saved.id || title}`
+    );
+
+    return {
+      ok: true,
+
+      post: {
+        id:
+          saved.id,
+        title,
+        prompt:
+          generated.prompt,
+        imageUrl:
+          stored.url,
+        category:
+          generated.category ||
+          category,
+        promptProvider:
+          generated.provider,
+        imageProvider:
+          image.provider,
+        source:
+          `AI Visual Inspiration · ${generated.provider} · ${image.provider}`
+      },
+
+      trend
+    };
+  } finally {
+    postingNow = false;
+  }
+}
+
+/* =========================================================
+   PUBLIC API
+========================================================= */
+
+app.get(
+  "/api/prompts",
+  async (req, res) => {
+    try {
+      const prompts =
+        await getPrompts();
+
+      const q =
+        clean(
+          req.query.q
+        ).toLowerCase();
+
+      const category =
+        clean(
+          req.query.category
+        ).toLowerCase();
+
+      const media =
+        clean(
+          req.query.media
+        ).toLowerCase();
+
+      const filtered =
+        prompts.filter(
+          item => {
+            const text =
+              [
+                item.title,
+                item.prompt,
+                item.category,
+                item.model
+              ]
+                .join(" ")
+                .toLowerCase();
+
+            return (
+              (!q ||
+                text.includes(q)) &&
+              (!category ||
+                category === "all" ||
+                String(
+                  item.category
+                ).toLowerCase() ===
+                  category) &&
+              (!media ||
+                media === "all" ||
+                String(
+                  item.media
+                ).toLowerCase() ===
+                  media)
+            );
+          }
+        );
+
+      res.json(
+        filtered
+      );
+    } catch (error) {
+      console.error(
+        error
+      );
+
+      res.status(500).json({
+        error:
+          "Unable to load prompts"
+      });
+    }
+  }
+);
+
+app.get(
+  "/api/prompts/:slug",
+  async (req, res) => {
+    try {
+      const prompt =
+        await getPromptBySlug(
+          req.params.slug
+        );
+
+      if (!prompt) {
+        return res
+          .status(404)
+          .json({
+            error:
+              "Not found"
+          });
+      }
+
+      res.json(prompt);
+    } catch (error) {
+      res.status(500).json({
+        error:
+          "Unable to load prompt"
+      });
+    }
+  }
+);
+
+/* =========================================================
+   PUBLIC SETTINGS
+========================================================= */
+
+app.get(
+  "/api/public/settings",
+  async (req, res) => {
+    try {
+      const settings =
+        await getSettings();
+
+      res.json({
+        copyGateSeconds:
+          settings.copyGateSeconds,
+        directLink:
+          settings.directLink
+      });
+    } catch {
+      res.status(500).json({
+        error:
+          "Unable to load settings"
+      });
+    }
+  }
+);
+
+/* =========================================================
+   ADS PUBLIC
+========================================================= */
+
+app.get(
+  "/api/ads",
+  async (req, res) => {
+    try {
+      const ads =
+        await getAds();
+
+      res.set(
+        "Cache-Control",
+        "no-store"
+      );
+
+      res.json(ads);
+    } catch (error) {
+      console.error(
+        "[ADS]",
+        error
+      );
+
+      res.status(500).json({
+        error:
+          "Unable to load ads"
+      });
+    }
+  }
+);
+
+/* =========================================================
+   API V1
+========================================================= */
+
+app.use(
+  "/api/v1",
+  (req, res, next) => {
+    res.set(
+      "Access-Control-Allow-Origin",
+      "*"
+    );
+
+    next();
+  }
+);
+
+app.get(
+  "/api/v1/prompts",
+  async (req, res) => {
+    try {
+      const all =
+        await getPrompts();
+
+      const limit =
+        Math.min(
+          100,
+          Math.max(
+            1,
+            safeNumber(
+              req.query.limit,
+              20
+            )
+          )
+        );
+
+      const page =
+        Math.max(
+          1,
+          safeNumber(
+            req.query.page,
+            1
+          )
+        );
+
+      const start =
+        (page - 1) *
+        limit;
+
+      res.json({
+        data:
+          all.slice(
+            start,
+            start + limit
+          ),
+
+        meta: {
+          total:
+            all.length,
+
+          page,
+
+          limit,
+
+          pages:
+            Math.ceil(
+              all.length /
+                limit
+            )
+        }
+      });
+    } catch {
+      res.status(500).json({
+        error:
+          "Unable to load prompts"
+      });
+    }
+  }
+);
+
+app.get(
+  "/api/v1/prompts/:slug",
+  async (req, res) => {
+    try {
+      const prompt =
+        await getPromptBySlug(
+          req.params.slug
+        );
+
+      if (!prompt) {
+        return res
+          .status(404)
+          .json({
+            error:
+              "Not found"
+          });
+      }
+
+      res.json(prompt);
+    } catch {
+      res.status(500).json({
+        error:
+          "Unable to load prompt"
+      });
+    }
+  }
+);
 
 /* =========================================================
    AUTH
 ========================================================= */
 
-function requireAdmin(
+const failedLogins =
+  new Map();
+
+function safeCompare(
+  a,
+  b
+) {
+  const aa =
+    crypto
+      .createHash("sha256")
+      .update(
+        String(a || "")
+      )
+      .digest();
+
+  const bb =
+    crypto
+      .createHash("sha256")
+      .update(
+        String(b || "")
+      )
+      .digest();
+
+  return crypto.timingSafeEqual(
+    aa,
+    bb
+  );
+}
+
+app.post(
+  "/api/login",
+  (req, res) => {
+    const username =
+      clean(
+        req.body?.username
+      );
+
+    const password =
+      clean(
+        req.body?.password
+      );
+
+    const adminUsername =
+      process.env.ADMIN_USERNAME ||
+      "admin";
+
+    const adminPassword =
+      process.env.ADMIN_PASSWORD;
+
+    if (!adminPassword) {
+      return res.status(503).json({
+        error:
+          "ADMIN_PASSWORD is not configured."
+      });
+    }
+
+    const ip =
+      req.ip || "unknown";
+
+    const fail =
+      failedLogins.get(ip) || {
+        count: 0,
+        last: 0
+      };
+
+    if (
+      fail.count >= 5 &&
+      Date.now() -
+        fail.last <
+        15 * 60 * 1000
+    ) {
+      return res.status(429).json({
+        error:
+          "Too many login attempts. Try again later."
+      });
+    }
+
+    if (
+      safeCompare(
+        username,
+        adminUsername
+      ) &&
+      safeCompare(
+        password,
+        adminPassword
+      )
+    ) {
+      failedLogins.delete(
+        ip
+      );
+
+      req.session.admin =
+        true;
+
+      return res.json({
+        ok: true
+      });
+    }
+
+    failedLogins.set(
+      ip,
+      {
+        count:
+          fail.count + 1,
+        last:
+          Date.now()
+      }
+    );
+
+    res.status(401).json({
+      error:
+        "Invalid username or password."
+    });
+  }
+);
+
+app.post(
+  "/api/logout",
+  (req, res) => {
+    req.session.destroy(
+      () => {
+        res.json({
+          ok: true
+        });
+      }
+    );
+  }
+);
+
+app.get(
+  "/api/admin/me",
+  (req, res) => {
+    res.json({
+      authenticated:
+        !!req.session?.admin
+    });
+  }
+);
+
+function admin(
   req,
   res,
   next
@@ -1585,337 +3181,107 @@ function requireAdmin(
     return next();
   }
 
-  return res
-    .status(401)
-    .json({
-      error:
-        'Unauthorized'
-    });
+  res.status(401).json({
+    error:
+      "Unauthorized"
+  });
 }
-
-app.post(
-  '/api/login',
-  (req, res) => {
-    if (!ADMIN_PASSWORD) {
-      return res
-        .status(503)
-        .json({
-          error:
-            'ADMIN_PASSWORD is not configured.'
-        });
-    }
-
-    const username =
-      clean(
-        req.body?.username,
-        100
-      );
-
-    const password =
-      String(
-        req.body?.password ||
-        ''
-      );
-
-    if (
-      username ===
-        ADMIN_USERNAME &&
-      password ===
-        ADMIN_PASSWORD
-    ) {
-      req.session.admin =
-        true;
-
-      return res.json({
-        ok: true
-      });
-    }
-
-    return res
-      .status(401)
-      .json({
-        error:
-          'Invalid username or password.'
-      });
-  }
-);
-
-app.post(
-  '/api/logout',
-  (req, res) => {
-    req.session.destroy(
-      () =>
-        res.json({
-          ok: true
-        })
-    );
-  }
-);
-
-app.get(
-  '/api/admin/me',
-  (req, res) => {
-    res.json({
-      authenticated:
-        !!req.session?.admin
-    });
-  }
-);
-
-/* =========================================================
-   PUBLIC PROMPTS
-========================================================= */
-
-app.get(
-  '/api/prompts',
-  async (req, res) => {
-    try {
-      const q =
-        clean(
-          req.query.q
-        ).toLowerCase();
-
-      let items =
-        await getPrompts();
-
-      if (q) {
-        items =
-          items.filter(
-            p =>
-              [
-                p.title,
-                p.prompt,
-                p.category,
-                p.model
-              ]
-                .join(' ')
-                .toLowerCase()
-                .includes(q)
-          );
-      }
-
-      res.json(
-        items
-      );
-
-    } catch (error) {
-      res
-        .status(500)
-        .json({
-          error:
-            error.message
-        });
-    }
-  }
-);
-
-app.get(
-  '/api/prompts/:slug',
-  async (req, res) => {
-    try {
-      const item =
-        await getPromptBySlug(
-          req.params.slug
-        );
-
-      if (!item) {
-        return res
-          .status(404)
-          .json({
-            error:
-              'Not found'
-          });
-      }
-
-      res.json(
-        item
-      );
-
-    } catch (error) {
-      res
-        .status(500)
-        .json({
-          error:
-            error.message
-        });
-    }
-  }
-);
-
-app.get(
-  '/api/public/settings',
-  async (req, res) => {
-    try {
-      const settings =
-        await getSettings();
-
-      res.json({
-        copyGateSeconds:
-          Number(
-            settings?.copyGateSeconds ??
-            10
-          ),
-
-        directLink:
-          clean(
-            settings?.directLink ||
-            ''
-          )
-      });
-
-    } catch (error) {
-      res
-        .status(500)
-        .json({
-          error:
-            error.message
-        });
-    }
-  }
-);
-
-app.get(
-  '/api/ads',
-  async (req, res) => {
-    try {
-      res.set(
-        'Cache-Control',
-        'no-store'
-      );
-
-      res.json(
-        (await getAds()) ||
-        {}
-      );
-
-    } catch (error) {
-      res
-        .status(500)
-        .json({
-          error:
-            error.message
-        });
-    }
-  }
-);
 
 /* =========================================================
    ADMIN PROMPTS
 ========================================================= */
 
 app.get(
-  '/api/admin/prompts',
-  requireAdmin,
+  "/api/admin/prompts",
+  admin,
   async (req, res) => {
     try {
       res.json(
         await getPrompts()
       );
-
-    } catch (error) {
-      res
-        .status(500)
-        .json({
-          error:
-            error.message
-        });
+    } catch {
+      res.status(500).json({
+        error:
+          "Unable to load prompts"
+      });
     }
   }
 );
 
 app.post(
-  '/api/admin/prompts',
-  requireAdmin,
+  "/api/admin/prompts",
+  admin,
   async (req, res) => {
     try {
-      const b =
+      const body =
         req.body || {};
 
       if (
-        !clean(b.title) ||
-        !clean(b.prompt)
+        !body.title ||
+        !body.prompt
       ) {
-        return res
-          .status(400)
-          .json({
-            error:
-              'Title and prompt are required.'
-          });
+        return res.status(400).json({
+          error:
+            "Title and prompt are required."
+        });
       }
 
-      const item =
+      const saved =
         await addPrompt({
-          id:
-            crypto.randomUUID(),
-
           slug:
-            makeSlug(
-              b.title
-            ),
+            slugify(
+              body.title
+            ) +
+            "-" +
+            Date.now()
+              .toString(36),
 
           title:
-            clean(
-              b.title,
-              140
-            ),
+            body.title,
 
           prompt:
-            clean(
-              b.prompt,
-              10000
-            ),
-
-          model:
-            clean(
-              b.model,
-              140
-            ) || 'Any',
+            body.prompt,
 
           category:
-            clean(
-              b.category,
-              100
-            ) ||
-            'Creative Art',
+            body.category ||
+            "General",
 
           media:
-            clean(
-              b.media,
-              40
-            ) || 'Image',
+            body.media ||
+            "Image",
 
           imageUrl:
-            clean(
-              b.imageUrl,
-              5000
-            ),
+            body.imageUrl ||
+            "",
+
+          model:
+            body.model ||
+            "Any",
 
           source:
-            'Manual',
-
-          publishedAt:
-            new Date()
-              .toISOString()
+            body.source ||
+            "Manual"
         });
 
       res.json(
-        item
+        saved
+      );
+    } catch (error) {
+      console.error(
+        error
       );
 
-    } catch (error) {
-      res
-        .status(500)
-        .json({
-          error:
-            error.message
-        });
+      res.status(500).json({
+        error:
+          error.message
+      });
     }
   }
 );
 
 app.delete(
-  '/api/admin/prompts/:id',
-  requireAdmin,
+  "/api/admin/prompts/:id",
+  admin,
   async (req, res) => {
     try {
       await deletePrompt(
@@ -1925,156 +3291,260 @@ app.delete(
       res.json({
         ok: true
       });
-
     } catch (error) {
-      res
-        .status(500)
-        .json({
-          error:
-            error.message
-        });
+      res.status(500).json({
+        error:
+          error.message
+      });
     }
   }
 );
 
 /* =========================================================
-   ADMIN API PROVIDERS
+   ADMIN PROVIDERS
 ========================================================= */
 
 app.get(
-  '/api/admin/providers',
-  requireAdmin,
+  "/api/admin/providers",
+  admin,
   async (req, res) => {
     try {
+      const providers =
+        await getProviders();
+
+      /*
+        Do not expose API keys
+        to browser.
+      */
+
       res.json(
-        await allProviders()
+        providers.map(
+          provider => ({
+            ...provider,
+
+            apiKey:
+              provider.apiKey
+                ? "••••••••"
+                : "",
+
+            hasApiKey:
+              !!provider.apiKey
+          })
+        )
+      );
+    } catch (error) {
+      console.error(
+        "[ADMIN PROVIDERS]",
+        error
       );
 
-    } catch (error) {
-      res
-        .status(500)
-        .json({
-          error:
-            error.message
-        });
+      res.status(500).json({
+        error:
+          error.message
+      });
     }
   }
 );
 
 app.post(
-  '/api/admin/providers',
-  requireAdmin,
+  "/api/admin/providers",
+  admin,
   async (req, res) => {
     try {
-      const b =
+      const body =
         req.body || {};
 
       const category =
-        normalizeCategory(
-          b.category
+        clean(
+          body.category
         );
 
       const providerName =
         clean(
-          b.providerName ||
-          b.provider_name ||
-          b.name,
-          160
+          body.providerName ||
+            body.provider_name ||
+            body.name
         );
 
-      const apiKey =
-        clean(
-          b.apiKey ||
-          b.api_key ||
-          b.key,
-          20000
-        );
+      if (
+        !category ||
+        !providerName
+      ) {
+        return res.status(400).json({
+          error:
+            "Category and provider name are required."
+        });
+      }
 
-      const validCategories = [
-        'trending_search',
-        'prompt_generate',
-        'photo_generate'
+      const allowedCategories = [
+        "trending_search",
+        "prompt_generate",
+        "photo_generate"
       ];
 
       if (
-        !validCategories.includes(
+        !allowedCategories.includes(
           category
         )
       ) {
-        return res
-          .status(400)
-          .json({
-            error:
-              'Invalid provider category.'
-          });
+        return res.status(400).json({
+          error:
+            "Invalid provider category."
+        });
       }
 
-      if (!providerName) {
-        return res
-          .status(400)
-          .json({
-            error:
-              'Provider name is required.'
-          });
-      }
-
-      const publicTrendProvider =
-        category ===
-          'trending_search' &&
-        [
-          'bluesky',
-          'bluesky public',
-          'reddit public',
-          'reddit (public)'
-        ].includes(
-          providerName
-            .toLowerCase()
-        );
-
-      if (
-        !apiKey &&
-        !publicTrendProvider
-      ) {
-        return res
-          .status(400)
-          .json({
-            error:
-              'API key/token is required for this provider.'
-          });
-      }
-
-      const item =
+      const provider =
         await addProvider({
           category,
 
           providerName,
 
-          apiKey,
+          apiKey:
+            clean(
+              body.apiKey ||
+                body.api_key
+            ),
 
           enabled:
-            b.enabled !== false
+            body.enabled ===
+            undefined
+              ? true
+              : !!body.enabled,
+
+          config:
+            body.config &&
+            typeof body.config ===
+              "object"
+              ? body.config
+              : {}
         });
 
-      res.json(
-        normalizeProvider(
-          item
-        )
+      res.json({
+        ok: true,
+
+        provider: {
+          ...provider,
+
+          apiKey:
+            provider.apiKey
+              ? "••••••••"
+              : "",
+
+          hasApiKey:
+            !!provider.apiKey
+        }
+      });
+    } catch (error) {
+      console.error(
+        "[ADD PROVIDER]",
+        error
       );
 
+      res.status(500).json({
+        error:
+          error.message
+      });
+    }
+  }
+);
+
+app.put(
+  "/api/admin/providers/:id",
+  admin,
+  async (req, res) => {
+    try {
+      const body =
+        req.body || {};
+
+      const updates =
+        {};
+
+      if (
+        body.category !==
+        undefined
+      ) {
+        updates.category =
+          body.category;
+      }
+
+      if (
+        body.providerName !==
+        undefined
+      ) {
+        updates.providerName =
+          body.providerName;
+      }
+
+      /*
+        If browser sends masked
+        API key, keep old key.
+      */
+
+      if (
+        body.apiKey !==
+          undefined &&
+        !String(
+          body.apiKey
+        ).startsWith("••")
+      ) {
+        updates.apiKey =
+          body.apiKey;
+      }
+
+      if (
+        body.enabled !==
+        undefined
+      ) {
+        updates.enabled =
+          !!body.enabled;
+      }
+
+      if (
+        body.config !==
+        undefined
+      ) {
+        updates.config =
+          body.config;
+      }
+
+      const provider =
+        await updateProvider(
+          req.params.id,
+          updates
+        );
+
+      res.json({
+        ok: true,
+
+        provider: {
+          ...provider,
+
+          apiKey:
+            provider.apiKey
+              ? "••••••••"
+              : "",
+
+          hasApiKey:
+            !!provider.apiKey
+        }
+      });
     } catch (error) {
-      res
-        .status(500)
-        .json({
-          error:
-            error.message
-        });
+      console.error(
+        "[UPDATE PROVIDER]",
+        error
+      );
+
+      res.status(500).json({
+        error:
+          error.message
+      });
     }
   }
 );
 
 app.delete(
-  '/api/admin/providers/:id',
-  requireAdmin,
+  "/api/admin/providers/:id",
+  admin,
   async (req, res) => {
     try {
       await deleteProvider(
@@ -2084,181 +3554,107 @@ app.delete(
       res.json({
         ok: true
       });
-
     } catch (error) {
-      res
-        .status(500)
-        .json({
-          error:
-            error.message
-        });
+      res.status(500).json({
+        error:
+          error.message
+      });
     }
   }
 );
 
 /* =========================================================
-   SETTINGS
+   ADMIN SETTINGS
 ========================================================= */
 
 app.get(
-  '/api/admin/settings',
-  requireAdmin,
+  "/api/admin/settings",
+  admin,
   async (req, res) => {
     try {
       res.json(
         await getSettings()
       );
-
     } catch (error) {
-      res
-        .status(500)
-        .json({
-          error:
-            error.message
-        });
+      res.status(500).json({
+        error:
+          error.message
+      });
     }
   }
 );
 
 app.post(
-  '/api/admin/settings',
-  requireAdmin,
+  "/api/admin/settings",
+  admin,
   async (req, res) => {
     try {
-      const b =
+      const body =
         req.body || {};
 
       const current =
         await getSettings();
 
-      const next = {
-        ...current,
+      const saved =
+        await saveSettings({
+          autoPost:
+            body.autoPost !==
+            undefined
+              ? !!body.autoPost
+              : body.autoPostEnabled !==
+                undefined
+              ? !!body.autoPostEnabled
+              : current.autoPost,
 
-        autoPost:
-          b.autoPost !==
-          undefined
-            ? !!b.autoPost
-            : b.autoPostEnabled !==
-              undefined
-              ? !!b.autoPostEnabled
-              : !!current.autoPost,
+          postIntervalMinutes:
+            body.postIntervalMinutes !==
+            undefined
+              ? safeNumber(
+                  body.postIntervalMinutes,
+                  60
+                )
+              : current.postIntervalMinutes,
 
-        postIntervalMinutes:
-          Math.max(
-            1,
-            Number(
-              b.postIntervalMinutes ??
-              b.interval ??
-              current.postIntervalMinutes ??
-              60
-            )
-          ),
+          postsPerRun:
+            body.postsPerRun !==
+            undefined
+              ? safeNumber(
+                  body.postsPerRun,
+                  1
+                )
+              : current.postsPerRun,
 
-        postsPerRun:
-          Math.max(
-            1,
-            Math.min(
-              10,
-              Number(
-                b.postsPerRun ??
-                current.postsPerRun ??
-                1
-              )
-            )
-          ),
+          copyGateSeconds:
+            body.copyGateSeconds !==
+            undefined
+              ? safeNumber(
+                  body.copyGateSeconds,
+                  10
+                )
+              : current.copyGateSeconds,
 
-        copyGateSeconds:
-          Math.max(
-            0,
-            Number(
-              b.copyGateSeconds ??
-              current.copyGateSeconds ??
-              10
-            )
-          ),
-
-        directLink:
-          clean(
-            b.directLink ??
-            current.directLink ??
-            '',
-            5000
-          )
-      };
+          directLink:
+            body.directLink !==
+            undefined
+              ? clean(
+                  body.directLink
+                )
+              : current.directLink
+        });
 
       res.json(
-        await saveSettings(
-          next
-        )
+        saved
       );
-
-    } catch (error) {
-      res
-        .status(500)
-        .json({
-          error:
-            error.message
-        });
-    }
-  }
-);
-
-/* =========================================================
-   RUN NOW
-========================================================= */
-
-app.post(
-  '/api/admin/collect',
-  requireAdmin,
-  async (req, res) => {
-    if (autoRunning) {
-      return res
-        .status(409)
-        .json({
-          ok: false,
-
-          error:
-            'Automatic posting is already running.'
-        });
-    }
-
-    console.log(
-      '[AUTO] Manual Run now requested'
-    );
-
-    autoRunning =
-      true;
-
-    try {
-      const result =
-        await runAutomaticPosting();
-
-      console.log(
-        `[AUTO] Manual Run finished: added=${result.added || 0}`
-      );
-
-      res.json(
-        result
-      );
-
     } catch (error) {
       console.error(
-        '[AUTO ERROR] Manual Run:',
+        "[SETTINGS]",
         error
       );
 
-      res
-        .status(500)
-        .json({
-          ok: false,
-
-          error:
-            error.message
-        });
-
-    } finally {
-      autoRunning =
-        false;
+      res.status(500).json({
+        error:
+          error.message
+      });
     }
   }
 );
@@ -2268,260 +3664,362 @@ app.post(
 ========================================================= */
 
 app.get(
-  '/api/admin/ads',
-  requireAdmin,
+  "/api/admin/ads",
+  admin,
   async (req, res) => {
     try {
       res.json(
-        (await getAds()) ||
-        {}
+        await getAds()
       );
-
     } catch (error) {
-      res
-        .status(500)
-        .json({
-          error:
-            error.message
-        });
+      res.status(500).json({
+        error:
+          error.message
+      });
     }
   }
 );
 
 app.post(
-  '/api/admin/ads',
-  requireAdmin,
+  "/api/admin/ads",
+  admin,
   async (req, res) => {
     try {
-      res.json(
+      const ads =
+        req.body || {};
+
+      const saved =
         await saveAds(
-          req.body || {}
-        )
+          ads
+        );
+
+      res.json(
+        saved
+      );
+    } catch (error) {
+      console.error(
+        "[ADS]",
+        error
       );
 
-    } catch (error) {
-      res
-        .status(500)
-        .json({
-          error:
-            error.message
-        });
+      res.status(500).json({
+        error:
+          error.message
+      });
     }
   }
 );
 
 /* =========================================================
-   SCHEDULER
+   MANUAL AUTO-POST / COLLECT
 ========================================================= */
 
-let autoTimer =
-  null;
+app.post(
+  "/api/admin/collect",
+  admin,
+  async (req, res) => {
+    try {
+      const result =
+        await createAutomaticPost();
 
-async function startScheduler() {
-  if (autoTimer) {
-    clearInterval(
-      autoTimer
-    );
+      res.json(
+        result
+      );
+    } catch (error) {
+      console.error(
+        "[MANUAL AUTO POST]",
+        error
+      );
+
+      res.status(500).json({
+        ok: false,
+        error:
+          error.message
+      });
+    }
+  }
+);
+
+/* =========================================================
+   AUTOMATIC POST SCHEDULER
+========================================================= */
+
+let schedulerRunning =
+  false;
+
+async function runScheduler() {
+  if (schedulerRunning) {
+    return;
   }
 
-  const settings =
-    await getSettings();
+  schedulerRunning = true;
 
-  const minutes =
-    Math.max(
-      1,
-      Number(
-        settings?.postIntervalMinutes ||
-        60
-      )
-    );
-
-  console.log(
-    `Automatic posting scheduled every ${minutes} minute(s).`
-  );
-
-  autoTimer =
-    setInterval(
-      async () => {
-        if (autoRunning) {
-          console.log(
-            '[AUTO] Previous run is still running.'
-          );
-
-          return;
-        }
-
-        try {
-          const current =
-            await getSettings();
-
-          if (
-            !current?.autoPost
-          ) {
-            return;
-          }
-
-          autoRunning =
-            true;
-
-          console.log(
-            '[AUTO] Scheduled run started.'
-          );
-
-          const result =
-            await runAutomaticPosting();
-
-          console.log(
-            '[AUTO] Scheduled result:',
-            JSON.stringify(
-              result
-            )
-          );
-
-        } catch (error) {
-          console.error(
-            '[AUTO ERROR] Scheduled run:',
-            error.message
-          );
-
-        } finally {
-          autoRunning =
-            false;
-        }
-      },
-
-      minutes *
-        60 *
-        1000
-    );
-}
-
-/* =========================================================
-   ROUTES
-========================================================= */
-
-app.get(
-  '/admin',
-  requireAdmin,
-  (req, res) =>
-    res.sendFile(
-      path.join(
-        __dirname,
-        'public',
-        'admin.html'
-      )
-    )
-);
-
-app.use(
-  '/api',
-  (req, res) =>
-    res
-      .status(404)
-      .json({
-        error:
-          'Not found'
-      })
-);
-
-app.get(
-  '*splat',
-  (req, res) =>
-    res.sendFile(
-      path.join(
-        __dirname,
-        'public',
-        'index.html'
-      )
-    )
-);
-
-/* =========================================================
-   BOOT
-========================================================= */
-
-async function boot() {
   try {
-    console.log(
-      'Database: Supabase PostgreSQL'
-    );
-
-    const providers =
-      await allProviders();
-
-    console.log(
-      '3 API categories enabled:'
-    );
-
-    console.log(
-      '1. Trending Search'
-    );
-
-    console.log(
-      '2. Prompt Generate'
-    );
-
-    console.log(
-      '3. Image / Photo Generate'
-    );
-
-    console.log(
-      `Configured providers: ${providers.length}`
-    );
-
-    console.log(
-      '[BOOT] Providers:',
-      providers
-        .map(
-          p =>
-            `${p.category}:${p.providerName}:${
-              p.enabled
-                ? 'enabled'
-                : 'disabled'
-            }`
-        )
-        .join(', ') ||
-        'none'
-    );
+    const settings =
+      await getSettings();
 
     if (
-      cloudinaryReady()
+      settings.autoPost ===
+      false
     ) {
-      configureCloudinary();
-
-      console.log(
-        'Cloudinary storage enabled.'
-      );
-    } else {
-      console.warn(
-        'Cloudinary environment variables are missing.'
-      );
+      return;
     }
 
-    await startScheduler();
-
-    app.listen(
-      PORT,
-      () =>
-        console.log(
-          `PromptForge running on port ${PORT}`
+    const interval =
+      Math.max(
+        1,
+        safeNumber(
+          settings.postIntervalMinutes,
+          60
         )
+      );
+
+    const providers =
+      await getProviders();
+
+    const hasTrending =
+      providersFor(
+        providers,
+        "trending_search"
+      ).length > 0;
+
+    const hasPrompt =
+      providersFor(
+        providers,
+        "prompt_generate"
+      ).length > 0;
+
+    const hasPhoto =
+      providersFor(
+        providers,
+        "photo_generate"
+      ).length > 0;
+
+    if (
+      !hasPrompt ||
+      !hasPhoto
+    ) {
+      console.log(
+        "[AUTO] Waiting: Prompt Generate and Photo Generate APIs are required."
+      );
+
+      return;
+    }
+
+    console.log(
+      `[AUTO] Automatic posting cycle started. Trending API: ${hasTrending ? "yes" : "creative seed"}`
     );
 
+    const count =
+      Math.max(
+        1,
+        Math.min(
+          20,
+          safeNumber(
+            settings.postsPerRun,
+            1
+          )
+        )
+      );
+
+    for (
+      let i = 0;
+      i < count;
+      i++
+    ) {
+      try {
+        await createAutomaticPost();
+      } catch (error) {
+        console.error(
+          "[AUTO ERROR]",
+          error.message
+        );
+      }
+    }
+
+    console.log(
+      `[AUTO] Next scheduled cycle target: ${interval} minute(s).`
+    );
   } catch (error) {
     console.error(
-      'Startup error:',
-      error
+      "[SCHEDULER]",
+      error.message
     );
-
-    app.listen(
-      PORT,
-      () =>
-        console.log(
-          `PromptForge running on port ${PORT} (startup warning)`
-        )
-    );
+  } finally {
+    schedulerRunning =
+      false;
   }
 }
 
-boot();
+/*
+  Check every minute.
+  The actual interval is read from
+  Supabase settings.
+
+  This means admin can change:
+  60 minutes -> 30 minutes -> 10 minutes
+  without changing server.js.
+*/
+
+let lastAutomaticRun = 0;
+
+setInterval(
+  async () => {
+    try {
+      const settings =
+        await getSettings();
+
+      if (
+        settings.autoPost ===
+        false
+      ) {
+        return;
+      }
+
+      const intervalMs =
+        Math.max(
+          1,
+          safeNumber(
+            settings.postIntervalMinutes,
+            60
+          )
+        ) *
+        60 *
+        1000;
+
+      if (
+        Date.now() -
+          lastAutomaticRun <
+        intervalMs
+      ) {
+        return;
+      }
+
+      lastAutomaticRun =
+        Date.now();
+
+      await runScheduler();
+    } catch (error) {
+      console.error(
+        "[AUTO TIMER]",
+        error.message
+      );
+    }
+  },
+  60 * 1000
+);
+
+/* =========================================================
+   HEALTH
+========================================================= */
+
+app.get(
+  "/health",
+  async (req, res) => {
+    res.json({
+      ok: true,
+      database:
+        "Supabase PostgreSQL",
+      cloudinary:
+        cloudinaryEnabled,
+      time:
+        new Date().toISOString()
+    });
+  }
+);
+
+/* =========================================================
+   404 API
+========================================================= */
+
+app.use(
+  "/api",
+  (req, res) => {
+    res.status(404).json({
+      error:
+        "API endpoint not found"
+    });
+  }
+);
+
+/* =========================================================
+   FRONTEND FALLBACK
+========================================================= */
+
+app.get(
+  "*splat",
+  (req, res) => {
+    res.sendFile(
+      path.join(
+        __dirname,
+        "public",
+        "index.html"
+      )
+    );
+  }
+);
+
+/* =========================================================
+   START
+========================================================= */
+
+app.listen(
+  PORT,
+  () => {
+    console.log(
+      "=========================================="
+    );
+
+    console.log(
+      "PromptForge server started"
+    );
+
+    console.log(
+      `Port: ${PORT}`
+    );
+
+    console.log(
+      "Database: Supabase PostgreSQL"
+    );
+
+    console.log(
+      `Cloudinary: ${
+        cloudinaryEnabled
+          ? "enabled"
+          : "disabled"
+      }`
+    );
+
+    console.log(
+      "API categories:"
+    );
+
+    console.log(
+      "1. Trending Search"
+    );
+
+    console.log(
+      "2. Prompt Generate"
+    );
+
+    console.log(
+      "3. Photo / Image Generate"
+    );
+
+    console.log(
+      "Custom API: enabled"
+    );
+
+    console.log(
+      "Unlimited API rotation: enabled"
+    );
+
+    console.log(
+      "Automatic fallback: enabled"
+    );
+
+    console.log(
+      "=========================================="
+    );
+  }
+);
