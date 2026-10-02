@@ -450,7 +450,7 @@ async function generatePromptGemini(
   apiKey,
   topic
 ) {
-  const model = "gemini-2.5-flash-lite";
+  const model = "gemini-3.5-flash-lite";
 
   const url =
     `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent` +
