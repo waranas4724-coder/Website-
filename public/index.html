@@ -1,652 +1,125 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8" />
+  <meta charset="UTF-8">
+
   <meta
     name="viewport"
-    content="width=device-width, initial-scale=1.0, viewport-fit=cover"
-  />
+    content="width=device-width, initial-scale=1.0"
+  >
 
-  <title>PromptForge — AI Prompts & Images</title>
+  <meta
+    name="theme-color"
+    content="#080b12"
+  >
 
   <meta
     name="description"
-    content="Discover AI-generated images and the exact prompts used to create them."
-  />
-
-  <meta name="theme-color" content="#08090d" />
-
-  <link rel="stylesheet" href="/styles.css" />
-
-  <style>
-    /* =========================================================
-       PromptForge Homepage
-       ========================================================= */
-
-    :root {
-      --pf-bg: #08090d;
-      --pf-bg-soft: #0d0f15;
-      --pf-card: #11131a;
-      --pf-card-2: #151820;
-      --pf-border: rgba(255,255,255,.09);
-      --pf-border-hover: rgba(255,255,255,.16);
-      --pf-text: #f5f7fb;
-      --pf-muted: #8e96a8;
-      --pf-accent: #8b5cf6;
-      --pf-accent-2: #6366f1;
-      --pf-radius: 20px;
-      --pf-shadow: 0 20px 70px rgba(0,0,0,.28);
-    }
-
-    * {
-      box-sizing: border-box;
-    }
-
-    html {
-      scroll-behavior: smooth;
-    }
-
-    body {
-      margin: 0;
-      background:
-        radial-gradient(
-          circle at 50% -10%,
-          rgba(99,102,241,.14),
-          transparent 38%
-        ),
-        var(--pf-bg);
-      color: var(--pf-text);
-      font-family:
-        Inter,
-        ui-sans-serif,
-        system-ui,
-        -apple-system,
-        BlinkMacSystemFont,
-        "Segoe UI",
-        sans-serif;
-      min-height: 100vh;
-    }
-
-    button,
-    input {
-      font: inherit;
-    }
-
-    button {
-      cursor: pointer;
-    }
-
-    a {
-      color: inherit;
-      text-decoration: none;
-    }
-
-    /* ---------------- Header ---------------- */
-
-    .pf-header {
-      position: sticky;
-      top: 0;
-      z-index: 100;
-      backdrop-filter: blur(20px);
-      -webkit-backdrop-filter: blur(20px);
-      background: rgba(8,9,13,.78);
-      border-bottom: 1px solid rgba(255,255,255,.06);
-    }
-
-    .pf-header-inner {
-      width: min(1240px, calc(100% - 32px));
-      margin: 0 auto;
-      height: 72px;
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      gap: 20px;
-    }
-
-    .pf-brand {
-      display: inline-flex;
-      align-items: center;
-      gap: 11px;
-      border: 0;
-      background: transparent;
-      color: var(--pf-text);
-      padding: 0;
-      user-select: none;
-    }
-
-    .pf-logo {
-      width: 38px;
-      height: 38px;
-      border-radius: 12px;
-      display: grid;
-      place-items: center;
-      background:
-        linear-gradient(135deg, #8b5cf6, #4f46e5);
-      box-shadow:
-        0 8px 30px rgba(99,102,241,.32);
-      font-weight: 900;
-      font-size: 17px;
-    }
-
-    .pf-brand-text {
-      font-size: 18px;
-      font-weight: 800;
-      letter-spacing: -.4px;
-    }
-
-    .pf-brand-text span {
-      color: #a78bfa;
-    }
-
-    .pf-header-right {
-      display: flex;
-      align-items: center;
-      gap: 10px;
-    }
-
-    .pf-admin-btn {
-      border: 1px solid var(--pf-border);
-      background: rgba(255,255,255,.035);
-      color: var(--pf-muted);
-      border-radius: 11px;
-      padding: 9px 13px;
-      font-size: 13px;
-      transition: .2s ease;
-    }
-
-    .pf-admin-btn:hover {
-      color: var(--pf-text);
-      border-color: var(--pf-border-hover);
-      background: rgba(255,255,255,.06);
-    }
-
-    /* ---------------- Main ---------------- */
-
-    .pf-main {
-      width: min(1240px, calc(100% - 32px));
-      margin: 0 auto;
-      padding-bottom: 80px;
-    }
-
-    /* ---------------- Hero ---------------- */
-
-    .pf-hero {
-      padding: 78px 0 38px;
-      text-align: center;
-    }
-
-    .pf-kicker {
-      display: inline-flex;
-      align-items: center;
-      gap: 8px;
-      padding: 7px 12px;
-      border: 1px solid rgba(139,92,246,.22);
-      background: rgba(139,92,246,.07);
-      color: #b9a3ff;
-      border-radius: 999px;
-      font-size: 12px;
-      font-weight: 700;
-      letter-spacing: .2px;
-      margin-bottom: 20px;
-    }
-
-    .pf-kicker-dot {
-      width: 7px;
-      height: 7px;
-      border-radius: 50%;
-      background: #a78bfa;
-      box-shadow: 0 0 14px rgba(167,139,250,.9);
-    }
-
-    .pf-hero h1 {
-      margin: 0 auto;
-      max-width: 820px;
-      font-size: clamp(38px, 7vw, 72px);
-      line-height: .98;
-      letter-spacing: -3px;
-      font-weight: 900;
-    }
-
-    .pf-hero h1 span {
-      background:
-        linear-gradient(
-          135deg,
-          #ffffff 10%,
-          #c4b5fd 48%,
-          #818cf8 90%
-        );
-      -webkit-background-clip: text;
-      background-clip: text;
-      color: transparent;
-    }
-
-    .pf-hero p {
-      max-width: 660px;
-      margin: 23px auto 0;
-      color: var(--pf-muted);
-      font-size: 16px;
-      line-height: 1.7;
-    }
-
-    /* ---------------- Search ---------------- */
-
-    .pf-search-wrap {
-      width: min(760px, 100%);
-      margin: 30px auto 0;
-      position: relative;
-    }
-
-    .pf-search {
-      width: 100%;
-      height: 58px;
-      padding: 0 22px 0 51px;
-      border-radius: 17px;
-      border: 1px solid rgba(255,255,255,.10);
-      outline: none;
-      background: rgba(255,255,255,.045);
-      color: var(--pf-text);
-      box-shadow: var(--pf-shadow);
-      transition: .2s ease;
-    }
-
-    .pf-search::placeholder {
-      color: #6f7687;
-    }
-
-    .pf-search:focus {
-      border-color: rgba(139,92,246,.55);
-      box-shadow:
-        0 0 0 4px rgba(139,92,246,.08),
-        var(--pf-shadow);
-    }
-
-    .pf-search-icon {
-      position: absolute;
-      left: 19px;
-      top: 50%;
-      transform: translateY(-50%);
-      color: #72798a;
-      pointer-events: none;
-      font-size: 18px;
-    }
-
-    /* ---------------- Filters ---------------- */
-
-    .pf-filters {
-      display: flex;
-      flex-wrap: wrap;
-      align-items: center;
-      justify-content: center;
-      gap: 8px;
-      margin-top: 25px;
-    }
-
-    .pf-filter {
-      border: 1px solid var(--pf-border);
-      background: rgba(255,255,255,.035);
-      color: #9299a9;
-      padding: 8px 13px;
-      border-radius: 999px;
-      font-size: 12px;
-      font-weight: 700;
-      transition: .2s ease;
-    }
-
-    .pf-filter:hover,
-    .pf-filter.active {
-      color: #fff;
-      border-color: rgba(139,92,246,.45);
-      background: rgba(139,92,246,.13);
-    }
-
-    /* ---------------- Ads ---------------- */
-
-    .pf-ad-slot {
-      width: 100%;
-      margin: 28px 0;
-      min-height: 0;
-    }
-
-    .pf-ad-slot:empty {
-      display: none;
-    }
-
-    .pf-ad-slot iframe {
-      width: 100%;
-      border: 0;
-      border-radius: 15px;
-      overflow: hidden;
-      display: block;
-    }
-
-    /* ---------------- Results heading ---------------- */
-
-    .pf-results-head {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      gap: 15px;
-      margin: 44px 0 18px;
-    }
-
-    .pf-results-title {
-      margin: 0;
-      font-size: 20px;
-      font-weight: 800;
-      letter-spacing: -.5px;
-    }
-
-    .pf-results-count {
-      color: var(--pf-muted);
-      font-size: 13px;
-    }
-
-    /* ---------------- Grid ---------------- */
-
-    #grid {
-      display: grid;
-      grid-template-columns: repeat(3, minmax(0, 1fr));
-      gap: 20px;
-    }
-
-    .pf-loading {
-      grid-column: 1 / -1;
-      min-height: 260px;
-      display: grid;
-      place-items: center;
-      color: var(--pf-muted);
-      border: 1px dashed var(--pf-border);
-      border-radius: var(--pf-radius);
-      background: rgba(255,255,255,.018);
-    }
-
-    /* ---------------- Empty state ---------------- */
-
-    .pf-empty {
-      grid-column: 1 / -1;
-      padding: 70px 20px;
-      text-align: center;
-      border: 1px dashed var(--pf-border);
-      border-radius: var(--pf-radius);
-      background: rgba(255,255,255,.018);
-    }
-
-    .pf-empty-icon {
-      width: 54px;
-      height: 54px;
-      margin: 0 auto 16px;
-      border-radius: 17px;
-      display: grid;
-      place-items: center;
-      background: rgba(139,92,246,.1);
-      color: #a78bfa;
-      font-size: 23px;
-    }
-
-    .pf-empty h3 {
-      margin: 0 0 8px;
-      font-size: 18px;
-    }
-
-    .pf-empty p {
-      margin: 0;
-      color: var(--pf-muted);
-      font-size: 14px;
-    }
-
-    /* ---------------- Footer ---------------- */
-
-    .pf-footer {
-      width: min(1240px, calc(100% - 32px));
-      margin: 0 auto;
-      padding: 28px 0 42px;
-      border-top: 1px solid rgba(255,255,255,.06);
-      color: #626a7b;
-      text-align: center;
-      font-size: 12px;
-    }
-
-    /* ---------------- Modal base ---------------- */
-
-    #modal {
-      z-index: 1000;
-    }
-
-    /* ---------------- Responsive ---------------- */
-
-    @media (max-width: 980px) {
-      #grid {
-        grid-template-columns: repeat(2, minmax(0, 1fr));
-      }
-
-      .pf-hero {
-        padding-top: 60px;
-      }
-    }
-
-    @media (max-width: 650px) {
-      .pf-header-inner {
-        width: min(100% - 20px, 1240px);
-        height: 64px;
-      }
-
-      .pf-main {
-        width: min(100% - 20px, 1240px);
-      }
-
-      .pf-brand-text {
-        font-size: 16px;
-      }
-
-      .pf-logo {
-        width: 34px;
-        height: 34px;
-        border-radius: 10px;
-      }
-
-      .pf-admin-btn {
-        display: none;
-      }
-
-      .pf-hero {
-        padding: 48px 0 28px;
-      }
-
-      .pf-hero h1 {
-        font-size: 43px;
-        letter-spacing: -2px;
-      }
-
-      .pf-hero p {
-        font-size: 14px;
-        line-height: 1.6;
-      }
-
-      .pf-search {
-        height: 54px;
-      }
-
-      #grid {
-        grid-template-columns: 1fr;
-        gap: 15px;
-      }
-
-      .pf-results-head {
-        margin-top: 32px;
-      }
-
-      .pf-results-title {
-        font-size: 18px;
-      }
-    }
-  </style>
+    content="PromptForge — discover AI prompts and generated images."
+  >
+
+  <title>PromptForge — AI Prompts</title>
+
+  <link
+    rel="stylesheet"
+    href="/styles.css"
+  >
 </head>
 
 <body>
 
-  <!-- =======================================================
-       HEADER
-       ======================================================= -->
+  <!-- HEADER -->
+  <header class="site-header">
 
-  <header class="pf-header">
-    <div class="pf-header-inner">
+    <div class="header-inner">
 
-      <!-- 5 clicks opens admin -->
-      <button
+      <a
+        href="/"
+        class="brand"
         id="brand"
-        class="pf-brand"
-        type="button"
-        aria-label="PromptForge"
+        aria-label="PromptForge Home"
       >
-        <span class="pf-logo">P</span>
+        <span class="brand-mark">PF</span>
 
-        <span class="pf-brand-text">
-          Prompt<span>Forge</span>
+        <span class="brand-text">
+          PromptForge
         </span>
-      </button>
+      </a>
 
-      <div class="pf-header-right">
-        <button
-          class="pf-admin-btn"
-          type="button"
-          onclick="window.location.href='/admin'"
-        >
-          Admin
-        </button>
-      </div>
-
-    </div>
-  </header>
-
-
-  <!-- =======================================================
-       MAIN
-       ======================================================= -->
-
-  <main class="pf-main">
-
-    <!-- HERO -->
-
-    <section class="pf-hero">
-
-      <div class="pf-kicker">
-        <span class="pf-kicker-dot"></span>
-        AI Prompts &amp; Images
-      </div>
-
-      <h1>
-        Discover the
-        <span>perfect prompt.</span>
-      </h1>
-
-      <p>
-        Explore AI-generated images, discover the prompts behind them,
-        and find inspiration for your next creation.
-      </p>
-
-      <!-- SEARCH -->
-
-      <div class="pf-search-wrap">
-
-        <span class="pf-search-icon">⌕</span>
+      <div class="header-search">
 
         <input
           id="search"
-          class="pf-search"
           type="search"
+          placeholder="Search prompts..."
           autocomplete="off"
-          placeholder="Search prompts, images, topics..."
           aria-label="Search prompts"
-        />
+        >
 
       </div>
 
+      <nav class="header-nav">
 
-      <!-- FILTERS -->
-
-      <div class="pf-filters">
-
-        <button
-          class="pf-filter active"
-          type="button"
-          data-media=""
+        <a
+          href="#prompts"
+          class="nav-link"
         >
-          All
-        </button>
+          Explore
+        </a>
 
-        <button
-          class="pf-filter"
-          type="button"
-          data-media="Image"
+        <a
+          href="#categories"
+          class="nav-link"
         >
-          Images
-        </button>
+          Categories
+        </a>
 
-        <button
-          class="pf-filter"
-          type="button"
-          data-media="Prompt"
-        >
-          Prompts
-        </button>
+      </nav>
 
-      </div>
+    </div>
+
+  </header>
 
 
-      <!-- CATEGORY FILTERS -->
+  <!-- HERO -->
+  <main>
 
-      <div
-        class="pf-filters categories"
-        aria-label="Categories"
-      >
+    <section class="hero">
 
-        <button
-          class="pf-filter active"
-          type="button"
-          data-cat=""
-        >
-          All Categories
-        </button>
+      <div class="hero-content">
 
-        <button
-          class="pf-filter"
-          type="button"
-          data-cat="Trending"
-        >
-          Trending
-        </button>
+        <div class="hero-badge">
+          ✦ AI Prompt Library
+        </div>
 
-        <button
-          class="pf-filter"
-          type="button"
-          data-cat="Photography"
-        >
-          Photography
-        </button>
+        <h1>
+          Discover powerful
+          <span>AI prompts.</span>
+        </h1>
 
-        <button
-          class="pf-filter"
-          type="button"
-          data-cat="Art"
-        >
-          Art
-        </button>
+        <p>
+          Explore high-quality prompts and
+          AI-generated visuals created with
+          PromptForge.
+        </p>
 
-        <button
-          class="pf-filter"
-          type="button"
-          data-cat="Portrait"
-        >
-          Portrait
-        </button>
+        <div class="hero-actions">
 
-        <button
-          class="pf-filter"
-          type="button"
-          data-cat="Cinematic"
-        >
-          Cinematic
-        </button>
+          <a
+            href="#prompts"
+            class="primary-btn"
+          >
+            Explore Prompts
+          </a>
+
+          <a
+            href="#categories"
+            class="secondary-btn"
+          >
+            Browse Categories
+          </a>
+
+        </div>
 
       </div>
 
@@ -654,102 +127,255 @@
 
 
     <!-- TOP AD -->
-
-    <div
-      class="pf-ad-slot"
-      data-slot="banner_top"
-    ></div>
-
-
-    <!-- RESULTS HEADER -->
-
-    <section class="pf-results-head">
-
-      <h2 class="pf-results-title">
-        Latest creations
-      </h2>
+    <section
+      class="ad-section"
+      aria-label="Advertisement"
+    >
 
       <div
-        id="count"
-        class="pf-results-count"
-      >
-        0 posts
-      </div>
+        class="ad"
+        data-slot="banner_top"
+      ></div>
 
     </section>
 
 
-    <!-- POSTS GRID -->
-
+    <!-- PROMPTS -->
     <section
-      id="grid"
-      aria-live="polite"
+      id="prompts"
+      class="prompts-section"
     >
 
-      <div class="pf-loading">
-        Loading creations...
+      <div class="section-heading">
+
+        <div>
+
+          <span class="section-kicker">
+            EXPLORE
+          </span>
+
+          <h2>
+            Latest Prompts
+          </h2>
+
+        </div>
+
+        <div
+          id="count"
+          class="result-count"
+        >
+          Loading...
+        </div>
+
+      </div>
+
+
+      <!-- MEDIA FILTERS -->
+      <div class="filter-row">
+
+        <button
+          type="button"
+          class="pill active"
+          data-media="all"
+        >
+          All
+        </button>
+
+        <button
+          type="button"
+          class="pill"
+          data-media="Image"
+        >
+          Images
+        </button>
+
+        <button
+          type="button"
+          class="pill"
+          data-media="Video"
+        >
+          Videos
+        </button>
+
+        <button
+          type="button"
+          class="pill"
+          data-media="Text"
+        >
+          Text
+        </button>
+
+      </div>
+
+
+      <!-- CATEGORIES -->
+      <div
+        id="categories"
+        class="categories"
+      >
+
+        <button
+          type="button"
+          class="on"
+          data-cat="all"
+        >
+          All
+        </button>
+
+        <button
+          type="button"
+          data-cat="AI Art"
+        >
+          AI Art
+        </button>
+
+        <button
+          type="button"
+          data-cat="Photography"
+        >
+          Photography
+        </button>
+
+        <button
+          type="button"
+          data-cat="Portrait"
+        >
+          Portrait
+        </button>
+
+        <button
+          type="button"
+          data-cat="Cinematic"
+        >
+          Cinematic
+        </button>
+
+        <button
+          type="button"
+          data-cat="Anime"
+        >
+          Anime
+        </button>
+
+        <button
+          type="button"
+          data-cat="Fantasy"
+        >
+          Fantasy
+        </button>
+
+        <button
+          type="button"
+          data-cat="Architecture"
+        >
+          Architecture
+        </button>
+
+        <button
+          type="button"
+          data-cat="Product"
+        >
+          Product
+        </button>
+
+      </div>
+
+
+      <!-- GRID -->
+      <div
+        id="grid"
+        class="grid"
+        aria-live="polite"
+      >
+
+        <div class="loading-state">
+          <div class="loading-spinner"></div>
+
+          <span>
+            Loading prompts...
+          </span>
+        </div>
+
       </div>
 
     </section>
 
 
     <!-- MIDDLE AD -->
+    <section
+      class="ad-section"
+      aria-label="Advertisement"
+    >
 
-    <div
-      class="pf-ad-slot"
-      data-slot="banner_middle"
-    ></div>
+      <div
+        class="ad"
+        data-slot="banner_middle"
+      ></div>
 
-    <div
-      class="pf-ad-slot"
-      data-slot="native_banner"
-    ></div>
+    </section>
+
+
+    <!-- NATIVE AD -->
+    <section
+      class="ad-section native-ad-section"
+      aria-label="Advertisement"
+    >
+
+      <div
+        class="ad"
+        data-slot="native_banner"
+      ></div>
+
+    </section>
 
 
     <!-- BOTTOM AD -->
+    <section
+      class="ad-section"
+      aria-label="Advertisement"
+    >
 
-    <div
-      class="pf-ad-slot"
-      data-slot="banner_bottom"
-    ></div>
+      <div
+        class="ad"
+        data-slot="banner_bottom"
+      ></div>
+
+    </section>
 
   </main>
 
 
-  <!-- =======================================================
-       PROMPT DETAIL MODAL
-       app.js controls this
-       ======================================================= -->
-
+  <!-- PROMPT MODAL -->
   <div
     id="modal"
-    class="modal"
-    aria-hidden="true"
+    class="modal hidden"
+    role="dialog"
+    aria-modal="true"
+    aria-labelledby="modalTitle"
   >
 
-    <div
-      class="modal-backdrop"
-      data-close-modal="true"
-    ></div>
+    <div class="modal-backdrop"></div>
 
-    <div
-      class="modal-dialog"
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby="modalTitle"
-    >
+    <div class="modal-card">
 
       <button
         id="close"
-        class="modal-close"
         type="button"
+        class="modal-close"
         aria-label="Close"
       >
         ×
       </button>
 
-      <div id="modalBody">
-        <!-- app.js inserts prompt details here -->
+      <div
+        id="modalBody"
+        class="modal-body"
+      >
+
+        <div class="loading-state">
+          Loading...
+        </div>
+
       </div>
 
     </div>
@@ -757,28 +383,63 @@
   </div>
 
 
-  <!-- =======================================================
-       FOOTER
-       ======================================================= -->
+  <!-- FOOTER -->
+  <footer class="site-footer">
 
-  <footer class="pf-footer">
-    <div>
-      © <span id="year"></span> PromptForge
+    <div class="footer-inner">
+
+      <div class="footer-brand">
+
+        <div class="footer-logo">
+          PF
+        </div>
+
+        <div>
+
+          <strong>
+            PromptForge
+          </strong>
+
+          <p>
+            AI prompts &amp; creative inspiration.
+          </p>
+
+        </div>
+
+      </div>
+
+      <div class="footer-links">
+
+        <a href="/">
+          Home
+        </a>
+
+        <a href="#prompts">
+          Prompts
+        </a>
+
+        <a href="#categories">
+          Categories
+        </a>
+
+      </div>
+
+      <div class="footer-copy">
+
+        © 2026 PromptForge
+
+      </div>
+
     </div>
+
   </footer>
 
 
-  <!-- =======================================================
-       GLOBAL SMALL SCRIPT
-       ======================================================= -->
-
-  <script>
-    document.getElementById("year").textContent =
-      new Date().getFullYear();
-  </script>
-
-  <!-- Main frontend -->
-  <script src="/app.js" defer></script>
+  <!-- APP -->
+  <script
+    src="/app.js"
+    defer
+  ></script>
 
 </body>
 </html>
