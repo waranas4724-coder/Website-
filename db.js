@@ -1,173 +1,134 @@
-const fs = require("fs");
-const path = require("path");
+const { createClient } = require("@supabase/supabase-js");
 
-const DATA_DIR =
-  process.env.DATA_DIR ||
-  path.join(__dirname, "data");
+/*
+|--------------------------------------------------------------------------
+| Supabase connection
+|--------------------------------------------------------------------------
+*/
 
-const DB_FILE =
-  path.join(DATA_DIR, "promptforge.json");
+const SUPABASE_URL =
+  process.env.SUPABASE_URL;
 
-fs.mkdirSync(DATA_DIR, {
-  recursive: true
-});
+const SUPABASE_KEY =
+  process.env.SUPABASE_API_KEY ||
+  process.env.SUPABASE_SECRET_KEY;
 
-const DEFAULT_DB = {
-  prompts: [],
-
-  apiProviders: [],
-
-  settings: {
-    autoPost: true,
-    postIntervalMinutes: 60,
-    postsPerRun: 1,
-    copyGateSeconds: 10,
-    directLink: ""
-  },
-
-  ads: {}
-};
-
-function clone(value) {
-  return JSON.parse(
-    JSON.stringify(value)
+if (!SUPABASE_URL) {
+  console.error(
+    "❌ SUPABASE_URL is missing."
   );
 }
 
-function ensureDatabase() {
-  if (!fs.existsSync(DB_FILE)) {
-    fs.writeFileSync(
-      DB_FILE,
-      JSON.stringify(
-        DEFAULT_DB,
-        null,
-        2
-      ),
-      "utf8"
-    );
-
-    return;
-  }
-
-  try {
-    const raw =
-      fs.readFileSync(
-        DB_FILE,
-        "utf8"
-      );
-
-    const data =
-      JSON.parse(raw);
-
-    const merged = {
-      ...DEFAULT_DB,
-      ...data,
-
-      settings: {
-        ...DEFAULT_DB.settings,
-        ...(data.settings || {})
-      },
-
-      ads:
-        data.ads || {},
-
-      prompts:
-        Array.isArray(data.prompts)
-          ? data.prompts
-          : [],
-
-      apiProviders:
-        Array.isArray(
-          data.apiProviders
-        )
-          ? data.apiProviders
-          : []
-    };
-
-    fs.writeFileSync(
-      DB_FILE,
-      JSON.stringify(
-        merged,
-        null,
-        2
-      ),
-      "utf8"
-    );
-  } catch (error) {
-    console.error(
-      "Database read error:",
-      error
-    );
-
-    /*
-     * Don't destroy the old database.
-     * Create a backup before recovering.
-     */
-    const backup =
-      `${DB_FILE}.broken-${Date.now()}`;
-
-    try {
-      fs.copyFileSync(
-        DB_FILE,
-        backup
-      );
-    } catch (_) {}
-
-    fs.writeFileSync(
-      DB_FILE,
-      JSON.stringify(
-        DEFAULT_DB,
-        null,
-        2
-      ),
-      "utf8"
-    );
-  }
+if (!SUPABASE_KEY) {
+  console.error(
+    "❌ SUPABASE_API_KEY is missing."
+  );
 }
 
-function readDB() {
-  ensureDatabase();
-
-  try {
-    return JSON.parse(
-      fs.readFileSync(
-        DB_FILE,
-        "utf8"
+const supabase =
+  SUPABASE_URL && SUPABASE_KEY
+    ? createClient(
+        SUPABASE_URL,
+        SUPABASE_KEY,
+        {
+          auth: {
+            autoRefreshToken: false,
+            persistSession: false
+          }
+        }
       )
-    );
-  } catch (error) {
+    : null;
+
+
+/*
+|--------------------------------------------------------------------------
+| Helpers
+|--------------------------------------------------------------------------
+*/
+
+function makeId() {
+  return (
+    Date.now().toString(36) +
+    Math.random()
+      .toString(36)
+      .slice(2, 10)
+  );
+}
+
+function mapPrompt(row) {
+  if (!row) return null;
+
+  return {
+    id: row.id,
+    slug: row.slug,
+    title: row.title,
+    prompt: row.prompt,
+    category: row.category || "AI Image",
+    media:
+      row.media ||
+      row.image_url ||
+      "",
+    imageUrl:
+      row.image_url ||
+      (
+        typeof row.media === "string" &&
+        row.media.startsWith("/generated/")
+          ? row.media
+          : ""
+      ),
+    model: row.model || "",
+    source: row.source || "",
+    createdAt:
+      row.created_at ||
+      new Date().toISOString()
+  };
+}
+
+function mapProvider(row) {
+  if (!row) return null;
+
+  return {
+    id: row.id,
+    category:
+      row.category ||
+      "prompt_generate",
+
+    providerName:
+      row.provider_name ||
+      "Provider",
+
+    apiKey:
+      row.api_key ||
+      "",
+
+    enabled:
+      row.enabled !== false,
+
+    createdAt:
+      row.created_at ||
+      new Date().toISOString(),
+
+    updatedAt:
+      row.updated_at ||
+      null
+  };
+}
+
+function throwIfError(error, message) {
+  if (error) {
     console.error(
-      "Database load failed:",
+      message,
       error
     );
 
-    return clone(
-      DEFAULT_DB
+    throw new Error(
+      `${message}: ${
+        error.message || error
+      }`
     );
   }
 }
 
-function writeDB(data) {
-  ensureDatabase();
-
-  const tempFile =
-    `${DB_FILE}.tmp`;
-
-  fs.writeFileSync(
-    tempFile,
-    JSON.stringify(
-      data,
-      null,
-      2
-    ),
-    "utf8"
-  );
-
-  fs.renameSync(
-    tempFile,
-    DB_FILE
-  );
-}
 
 /*
 |--------------------------------------------------------------------------
@@ -175,73 +136,214 @@ function writeDB(data) {
 |--------------------------------------------------------------------------
 */
 
-function getPrompts() {
-  const db = readDB();
+async function getPrompts() {
+  if (!supabase) {
+    throw new Error(
+      "Supabase is not configured."
+    );
+  }
 
-  return Array.isArray(
-    db.prompts
-  )
-    ? db.prompts
+  const {
+    data,
+    error
+  } = await supabase
+    .from("prompts")
+    .select("*")
+    .order(
+      "created_at",
+      {
+        ascending: false
+      }
+    );
+
+  throwIfError(
+    error,
+    "Failed to load prompts"
+  );
+
+  return Array.isArray(data)
+    ? data.map(mapPrompt)
     : [];
 }
 
-function addPrompt(prompt) {
-  const db = readDB();
 
-  if (!Array.isArray(db.prompts)) {
-    db.prompts = [];
+async function addPrompt(prompt) {
+  if (!supabase) {
+    throw new Error(
+      "Supabase is not configured."
+    );
   }
 
-  db.prompts.unshift(
-    prompt
+  const item = {
+    id:
+      prompt.id ||
+      makeId(),
+
+    slug:
+      prompt.slug ||
+      makeId(),
+
+    title:
+      prompt.title ||
+      "Untitled",
+
+    prompt:
+      prompt.prompt ||
+      "",
+
+    category:
+      prompt.category ||
+      "AI Image",
+
+    media:
+      prompt.media ||
+      prompt.imageUrl ||
+      "",
+
+    image_url:
+      prompt.imageUrl ||
+      (
+        typeof prompt.media === "string" &&
+        prompt.media.startsWith(
+          "/generated/"
+        )
+          ? prompt.media
+          : ""
+      ),
+
+    model:
+      prompt.model ||
+      "",
+
+    source:
+      prompt.source ||
+      "",
+
+    created_at:
+      prompt.createdAt ||
+      new Date().toISOString()
+  };
+
+  const {
+    data,
+    error
+  } = await supabase
+    .from("prompts")
+    .insert(item)
+    .select("*")
+    .single();
+
+  throwIfError(
+    error,
+    "Failed to add prompt"
   );
 
-  writeDB(db);
-
-  return prompt;
+  return mapPrompt(data);
 }
 
-function updatePrompt(
+
+async function updatePrompt(
   id,
   changes
 ) {
-  const db = readDB();
-
-  const index =
-    db.prompts.findIndex(
-      (item) =>
-        String(item.id) ===
-        String(id)
+  if (!supabase) {
+    throw new Error(
+      "Supabase is not configured."
     );
-
-  if (index === -1) {
-    return null;
   }
 
-  db.prompts[index] = {
-    ...db.prompts[index],
-    ...changes
-  };
+  const update = {};
 
-  writeDB(db);
+  if (
+    changes.title !== undefined
+  ) {
+    update.title =
+      changes.title;
+  }
 
-  return db.prompts[index];
+  if (
+    changes.prompt !== undefined
+  ) {
+    update.prompt =
+      changes.prompt;
+  }
+
+  if (
+    changes.category !== undefined
+  ) {
+    update.category =
+      changes.category;
+  }
+
+  if (
+    changes.media !== undefined
+  ) {
+    update.media =
+      changes.media;
+  }
+
+  if (
+    changes.imageUrl !== undefined
+  ) {
+    update.image_url =
+      changes.imageUrl;
+  }
+
+  if (
+    changes.model !== undefined
+  ) {
+    update.model =
+      changes.model;
+  }
+
+  if (
+    changes.source !== undefined
+  ) {
+    update.source =
+      changes.source;
+  }
+
+  const {
+    data,
+    error
+  } = await supabase
+    .from("prompts")
+    .update(update)
+    .eq("id", id)
+    .select("*")
+    .maybeSingle();
+
+  throwIfError(
+    error,
+    "Failed to update prompt"
+  );
+
+  return mapPrompt(data);
 }
 
-function deletePrompt(id) {
-  const db = readDB();
 
-  db.prompts =
-    db.prompts.filter(
-      (item) =>
-        String(item.id) !==
-        String(id)
+async function deletePrompt(id) {
+  if (!supabase) {
+    throw new Error(
+      "Supabase is not configured."
     );
+  }
 
-  writeDB(db);
+  const {
+    error
+  } = await supabase
+    .from("prompts")
+    .delete()
+    .eq("id", id);
+
+  throwIfError(
+    error,
+    "Failed to delete prompt"
+  );
 
   return true;
 }
+
 
 /*
 |--------------------------------------------------------------------------
@@ -256,121 +358,179 @@ function deletePrompt(id) {
 |--------------------------------------------------------------------------
 */
 
-function getApiProviders() {
-  const db = readDB();
+async function getApiProviders() {
+  if (!supabase) {
+    throw new Error(
+      "Supabase is not configured."
+    );
+  }
 
-  return Array.isArray(
-    db.apiProviders
-  )
-    ? db.apiProviders
+  const {
+    data,
+    error
+  } = await supabase
+    .from("api_providers")
+    .select("*")
+    .order(
+      "created_at",
+      {
+        ascending: true
+      }
+    );
+
+  throwIfError(
+    error,
+    "Failed to load API providers"
+  );
+
+  return Array.isArray(data)
+    ? data.map(mapProvider)
     : [];
 }
 
-function addApiProvider(
+
+async function addApiProvider(
   provider
 ) {
-  const db = readDB();
-
-  if (
-    !Array.isArray(
-      db.apiProviders
-    )
-  ) {
-    db.apiProviders = [];
+  if (!supabase) {
+    throw new Error(
+      "Supabase is not configured."
+    );
   }
 
   const item = {
     id:
-      Date.now().toString(36) +
-      Math.random()
-        .toString(36)
-        .slice(2, 8),
+      provider.id ||
+      makeId(),
 
     category:
       provider.category ||
       "prompt_generate",
 
-    providerName:
+    provider_name:
       provider.providerName ||
       "Provider",
 
-    apiKey:
+    api_key:
       provider.apiKey ||
       "",
 
     enabled:
       provider.enabled !== false,
 
-    createdAt:
+    created_at:
       new Date().toISOString()
   };
 
-  db.apiProviders.push(
-    item
+  const {
+    data,
+    error
+  } = await supabase
+    .from("api_providers")
+    .insert(item)
+    .select("*")
+    .single();
+
+  throwIfError(
+    error,
+    "Failed to add API provider"
   );
 
-  writeDB(db);
-
-  return item;
+  return mapProvider(data);
 }
 
-function updateApiProvider(
+
+async function updateApiProvider(
   id,
   changes
 ) {
-  const db = readDB();
-
-  const index =
-    db.apiProviders.findIndex(
-      (item) =>
-        String(item.id) ===
-        String(id)
+  if (!supabase) {
+    throw new Error(
+      "Supabase is not configured."
     );
+  }
 
-  if (index === -1) {
-    return null;
+  const update = {};
+
+  if (
+    changes.category !== undefined
+  ) {
+    update.category =
+      changes.category;
+  }
+
+  if (
+    changes.providerName !== undefined
+  ) {
+    update.provider_name =
+      changes.providerName;
   }
 
   /*
-   * Don't accidentally replace an API key
+   * Never erase an existing key
    * with an empty value.
    */
   if (
-    changes.apiKey ===
-      undefined ||
-    changes.apiKey === ""
+    changes.apiKey !== undefined &&
+    changes.apiKey !== ""
   ) {
-    delete changes.apiKey;
+    update.api_key =
+      changes.apiKey;
   }
 
-  db.apiProviders[index] = {
-    ...db.apiProviders[index],
-    ...changes,
-    updatedAt:
-      new Date().toISOString()
-  };
+  if (
+    changes.enabled !== undefined
+  ) {
+    update.enabled =
+      changes.enabled;
+  }
 
-  writeDB(db);
+  update.updated_at =
+    new Date().toISOString();
 
-  return db.apiProviders[index];
+  const {
+    data,
+    error
+  } = await supabase
+    .from("api_providers")
+    .update(update)
+    .eq("id", id)
+    .select("*")
+    .maybeSingle();
+
+  throwIfError(
+    error,
+    "Failed to update API provider"
+  );
+
+  return mapProvider(data);
 }
 
-function deleteApiProvider(
+
+async function deleteApiProvider(
   id
 ) {
-  const db = readDB();
-
-  db.apiProviders =
-    db.apiProviders.filter(
-      (item) =>
-        String(item.id) !==
-        String(id)
+  if (!supabase) {
+    throw new Error(
+      "Supabase is not configured."
     );
+  }
 
-  writeDB(db);
+  const {
+    error
+  } = await supabase
+    .from("api_providers")
+    .delete()
+    .eq("id", id);
+
+  throwIfError(
+    error,
+    "Failed to delete API provider"
+  );
 
   return true;
 }
+
 
 /*
 |--------------------------------------------------------------------------
@@ -378,32 +538,160 @@ function deleteApiProvider(
 |--------------------------------------------------------------------------
 */
 
-function getSettings() {
-  const db = readDB();
+const DEFAULT_SETTINGS = {
+  autoPost: true,
+  postIntervalMinutes: 60,
+  postsPerRun: 1,
+  copyGateSeconds: 10,
+  directLink: ""
+};
+
+
+async function getSettings() {
+  if (!supabase) {
+    throw new Error(
+      "Supabase is not configured."
+    );
+  }
+
+  const {
+    data,
+    error
+  } = await supabase
+    .from("app_settings")
+    .select("*")
+    .eq("id", 1)
+    .maybeSingle();
+
+  throwIfError(
+    error,
+    "Failed to load settings"
+  );
+
+  if (!data) {
+    return {
+      ...DEFAULT_SETTINGS
+    };
+  }
 
   return {
-    ...clone(
-      DEFAULT_DB.settings
-    ),
-    ...(db.settings || {})
+    autoPost:
+      data.auto_post !== false,
+
+    postIntervalMinutes:
+      Number(
+        data.post_interval_minutes ||
+        60
+      ),
+
+    postsPerRun:
+      Number(
+        data.posts_per_run ||
+        1
+      ),
+
+    copyGateSeconds:
+      Number(
+        data.copy_gate_seconds ||
+        10
+      ),
+
+    directLink:
+      data.direct_link ||
+      ""
   };
 }
 
-function updateSettings(
+
+async function updateSettings(
   changes
 ) {
-  const db = readDB();
+  if (!supabase) {
+    throw new Error(
+      "Supabase is not configured."
+    );
+  }
 
-  db.settings = {
-    ...DEFAULT_DB.settings,
-    ...(db.settings || {}),
-    ...(changes || {})
+  const item = {
+    id: 1,
+
+    auto_post:
+      changes.autoPost !== undefined
+        ? Boolean(
+            changes.autoPost
+          )
+        : true,
+
+    post_interval_minutes:
+      Number(
+        changes.postIntervalMinutes ||
+        60
+      ),
+
+    posts_per_run:
+      Number(
+        changes.postsPerRun ||
+        1
+      ),
+
+    copy_gate_seconds:
+      Number(
+        changes.copyGateSeconds ||
+        10
+      ),
+
+    direct_link:
+      changes.directLink ||
+      ""
   };
 
-  writeDB(db);
+  const {
+    data,
+    error
+  } = await supabase
+    .from("app_settings")
+    .upsert(
+      item,
+      {
+        onConflict: "id"
+      }
+    )
+    .select("*")
+    .single();
 
-  return db.settings;
+  throwIfError(
+    error,
+    "Failed to update settings"
+  );
+
+  return {
+    autoPost:
+      data.auto_post !== false,
+
+    postIntervalMinutes:
+      Number(
+        data.post_interval_minutes ||
+        60
+      ),
+
+    postsPerRun:
+      Number(
+        data.posts_per_run ||
+        1
+      ),
+
+    copyGateSeconds:
+      Number(
+        data.copy_gate_seconds ||
+        10
+      ),
+
+    directLink:
+      data.direct_link ||
+      ""
+  };
 }
+
 
 /*
 |--------------------------------------------------------------------------
@@ -411,27 +699,69 @@ function updateSettings(
 |--------------------------------------------------------------------------
 */
 
-function getAds() {
-  const db = readDB();
+async function getAds() {
+  if (!supabase) {
+    throw new Error(
+      "Supabase is not configured."
+    );
+  }
 
-  return db.ads || {};
+  const {
+    data,
+    error
+  } = await supabase
+    .from("ads")
+    .select("data")
+    .eq("id", 1)
+    .maybeSingle();
+
+  throwIfError(
+    error,
+    "Failed to load ads"
+  );
+
+  return data?.data || {};
 }
 
-function updateAds(
+
+async function updateAds(
   ads
 ) {
-  const db = readDB();
+  if (!supabase) {
+    throw new Error(
+      "Supabase is not configured."
+    );
+  }
 
-  db.ads =
-    ads &&
-    typeof ads === "object"
-      ? ads
-      : {};
+  const {
+    data,
+    error
+  } = await supabase
+    .from("ads")
+    .upsert(
+      {
+        id: 1,
+        data:
+          ads &&
+          typeof ads === "object"
+            ? ads
+            : {}
+      },
+      {
+        onConflict: "id"
+      }
+    )
+    .select("data")
+    .single();
 
-  writeDB(db);
+  throwIfError(
+    error,
+    "Failed to update ads"
+  );
 
-  return db.ads;
+  return data?.data || {};
 }
+
 
 /*
 |--------------------------------------------------------------------------
@@ -440,8 +770,9 @@ function updateAds(
 */
 
 function getDatabasePath() {
-  return DB_FILE;
+  return "Supabase PostgreSQL";
 }
+
 
 /*
 |--------------------------------------------------------------------------
@@ -450,7 +781,7 @@ function getDatabasePath() {
 */
 
 module.exports = {
-  DB_FILE,
+  supabase,
 
   getDatabasePath,
 
@@ -470,11 +801,3 @@ module.exports = {
   getAds,
   updateAds
 };
-
-/*
-|--------------------------------------------------------------------------
-| Initialize
-|--------------------------------------------------------------------------
-*/
-
-ensureDatabase();
