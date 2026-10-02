@@ -1,110 +1,2825 @@
 <!doctype html>
 <html lang="en">
 <head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Admin · PromptForge</title>
-<link rel="stylesheet" href="/styles.css">
-<style>
-.admin-wrap{max-width:1100px;margin:auto;padding:32px 16px 70px}
-.admin-nav{display:flex;gap:8px;flex-wrap:wrap;margin:22px 0}.admin-tab{padding:10px 15px;border:1px solid #303036;border-radius:10px;background:#111116;color:#ddd;cursor:pointer}.admin-tab.active{border-color:#777;color:#fff;background:#1b1b22}.admin-section{display:none}.admin-section.active{display:block}.field{display:block;width:100%;padding:13px;margin:8px 0;background:#101014;border:1px solid #303036;color:#fff;border-radius:10px;box-sizing:border-box}.two{display:grid;grid-template-columns:1fr 1fr;gap:10px}.provider-row,.ad-row{border:1px solid #292930;border-radius:12px;padding:14px;margin:10px 0;background:#111116}.provider-meta{display:flex;justify-content:space-between;gap:12px;align-items:center}.danger{border-color:#713737!important;color:#ff9b9b!important}.success{color:#8ee6a8}.muted{color:#999}.status{margin-left:8px}.switchline{display:flex;align-items:center;gap:9px;margin:10px 0}.codebox{font-family:monospace;font-size:12px}.small{font-size:13px}.grid3{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}@media(max-width:700px){.two,.grid3{grid-template-columns:1fr}}
-</style>
+  <meta charset="utf-8">
+  <meta
+    name="viewport"
+    content="width=device-width,initial-scale=1"
+  >
+
+  <title>Admin · PromptForge</title>
+
+  <link
+    rel="stylesheet"
+    href="/styles.css"
+  >
+
+  <style>
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      background:
+        radial-gradient(
+          circle at top right,
+          rgba(100,80,255,.10),
+          transparent 35%
+        ),
+        #09090c;
+    }
+
+    .admin-wrap {
+      width: min(1180px, 94%);
+      margin: 0 auto;
+      padding: 35px 0 80px;
+    }
+
+    .admin-top {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 20px;
+      margin-bottom: 28px;
+    }
+
+    .admin-title {
+      margin: 5px 0 0;
+      font-size: clamp(28px,5vw,48px);
+      letter-spacing: -1.5px;
+    }
+
+    .muted2 {
+      color: #8d8d98;
+    }
+
+    .admin-card {
+      background:
+        linear-gradient(
+          180deg,
+          rgba(255,255,255,.045),
+          rgba(255,255,255,.018)
+        );
+
+      border: 1px solid #292930;
+      border-radius: 18px;
+      padding: 22px;
+      margin-bottom: 18px;
+      box-shadow:
+        0 20px 70px rgba(0,0,0,.18);
+    }
+
+    .admin-card h2,
+    .admin-card h3 {
+      margin-top: 0;
+    }
+
+    .field {
+      width: 100%;
+      padding: 13px 14px;
+      margin: 7px 0;
+      background: #101014;
+      border: 1px solid #303038;
+      color: #fff;
+      border-radius: 11px;
+      outline: none;
+    }
+
+    .field:focus {
+      border-color: #6e5cff;
+      box-shadow:
+        0 0 0 3px
+        rgba(110,92,255,.12);
+    }
+
+    textarea.field {
+      resize: vertical;
+      min-height: 90px;
+    }
+
+    .grid2 {
+      display: grid;
+      grid-template-columns:
+        repeat(2, minmax(0,1fr));
+      gap: 10px;
+    }
+
+    .grid3 {
+      display: grid;
+      grid-template-columns:
+        repeat(3, minmax(0,1fr));
+      gap: 10px;
+    }
+
+    .btn {
+      border: 1px solid #35353e;
+      background: #17171c;
+      color: #fff;
+      border-radius: 11px;
+      padding: 11px 15px;
+      cursor: pointer;
+      transition: .18s ease;
+      font-weight: 600;
+    }
+
+    .btn:hover {
+      transform: translateY(-1px);
+      border-color: #6458ff;
+      background: #201e2e;
+    }
+
+    .btn-primary {
+      background:
+        linear-gradient(
+          135deg,
+          #695cff,
+          #8b5cff
+        );
+      border-color: transparent;
+    }
+
+    .btn-danger {
+      border-color: #5b2929;
+      color: #ff9a9a;
+    }
+
+    .btn-success {
+      border-color: #285337;
+      color: #8ef0a8;
+    }
+
+    .pill {
+      border: 1px solid #34343d;
+      background: #121216;
+      color: #ddd;
+      padding: 8px 12px;
+      border-radius: 999px;
+      cursor: pointer;
+    }
+
+    .status {
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+      padding: 7px 10px;
+      border-radius: 999px;
+      font-size: 12px;
+      border: 1px solid #333;
+    }
+
+    .status.on {
+      color: #86f2a2;
+      border-color: #285c38;
+      background: rgba(40,92,56,.15);
+    }
+
+    .status.off {
+      color: #aaa;
+      background: #141418;
+    }
+
+    .provider-list {
+      display: grid;
+      gap: 10px;
+      margin-top: 15px;
+    }
+
+    .provider-item {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 15px;
+      border: 1px solid #2b2b32;
+      border-radius: 14px;
+      padding: 14px;
+      background: rgba(255,255,255,.02);
+    }
+
+    .provider-left {
+      min-width: 0;
+    }
+
+    .provider-name {
+      font-weight: 700;
+      margin-bottom: 5px;
+    }
+
+    .provider-meta {
+      font-size: 12px;
+      color: #8d8d98;
+    }
+
+    .provider-actions {
+      display: flex;
+      gap: 7px;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+    }
+
+    .category-head {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 15px;
+      margin-bottom: 8px;
+    }
+
+    .category-title {
+      display: flex;
+      align-items: center;
+      gap: 9px;
+    }
+
+    .category-dot {
+      width: 9px;
+      height: 9px;
+      border-radius: 50%;
+      background: #786cff;
+      box-shadow:
+        0 0 15px #786cff;
+    }
+
+    .counter {
+      color: #898995;
+      font-size: 12px;
+    }
+
+    .api-help {
+      padding: 12px 14px;
+      background: #111117;
+      border: 1px solid #292932;
+      border-radius: 12px;
+      color: #a4a4af;
+      font-size: 13px;
+      line-height: 1.6;
+      margin: 10px 0;
+    }
+
+    .api-help strong {
+      color: #ddd;
+    }
+
+    .rotation-box {
+      padding: 14px;
+      border-radius: 13px;
+      background:
+        linear-gradient(
+          135deg,
+          rgba(105,92,255,.10),
+          rgba(255,255,255,.025)
+        );
+      border: 1px solid #302d4d;
+      margin-top: 12px;
+    }
+
+    .rotation-flow {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      flex-wrap: wrap;
+      margin-top: 8px;
+    }
+
+    .rotation-item {
+      padding: 7px 10px;
+      background: #17161f;
+      border: 1px solid #353144;
+      border-radius: 8px;
+      font-size: 12px;
+    }
+
+    .arrow {
+      color: #6f64ff;
+    }
+
+    .ad-slot {
+      border-top: 1px solid #292930;
+      padding: 16px 0;
+    }
+
+    .ad-slot:first-child {
+      border-top: 0;
+    }
+
+    .ad-title {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+    }
+
+    .login-box {
+      width: min(430px, 94%);
+      margin: 12vh auto;
+    }
+
+    .login-box h1 {
+      margin: 5px 0 20px;
+    }
+
+    .login-error {
+      color: #ff8f8f;
+      min-height: 20px;
+      font-size: 13px;
+    }
+
+    .post-item {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 15px;
+      padding: 14px;
+      border: 1px solid #292930;
+      border-radius: 13px;
+      margin-bottom: 8px;
+    }
+
+    .post-info {
+      min-width: 0;
+    }
+
+    .post-title {
+      font-weight: 700;
+      margin-bottom: 4px;
+    }
+
+    .check-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      color: #ddd;
+      margin: 7px 0;
+    }
+
+    .check-row input {
+      accent-color: #6d5dff;
+    }
+
+    .hidden {
+      display: none !important;
+    }
+
+    .toast {
+      position: fixed;
+      right: 18px;
+      bottom: 18px;
+      z-index: 9999;
+      padding: 13px 17px;
+      border-radius: 12px;
+      background: #18181e;
+      border: 1px solid #383842;
+      box-shadow: 0 15px 50px rgba(0,0,0,.4);
+      color: #fff;
+      transform: translateY(20px);
+      opacity: 0;
+      pointer-events: none;
+      transition: .2s;
+    }
+
+    .toast.show {
+      transform: translateY(0);
+      opacity: 1;
+    }
+
+    @media(max-width:760px) {
+      .grid2,
+      .grid3 {
+        grid-template-columns: 1fr;
+      }
+
+      .admin-top {
+        align-items: flex-start;
+        flex-direction: column;
+      }
+
+      .provider-item,
+      .post-item {
+        align-items: flex-start;
+        flex-direction: column;
+      }
+
+      .provider-actions {
+        justify-content: flex-start;
+      }
+    }
+  </style>
 </head>
+
 <body>
-<main class="admin-wrap">
-<a href="/" style="color:#aaa;text-decoration:none">← View website</a>
 
-<div id="login" style="max-width:430px;margin:70px auto">
-<span class="kicker">PRIVATE ADMIN</span><h1>PromptForge Control Center</h1>
-<input id="user" class="field" placeholder="Username" autocomplete="username">
-<input id="pass" class="field" type="password" placeholder="Password" autocomplete="current-password">
-<button id="loginBtn" class="copy">Sign in</button>
-<p id="err" class="muted"></p>
+<!-- =====================================================
+     LOGIN
+===================================================== -->
+
+<div id="loginScreen" class="login-box">
+
+  <div class="admin-card">
+
+    <span class="kicker">
+      PRIVATE ADMIN
+    </span>
+
+    <h1>
+      PromptForge
+    </h1>
+
+    <p class="muted2">
+      Control your AI prompt platform.
+    </p>
+
+    <input
+      id="loginUsername"
+      class="field"
+      placeholder="Username"
+      autocomplete="username"
+    >
+
+    <input
+      id="loginPassword"
+      class="field"
+      type="password"
+      placeholder="Password"
+      autocomplete="current-password"
+    >
+
+    <button
+      id="loginBtn"
+      class="btn btn-primary"
+      style="width:100%;margin-top:8px"
+    >
+      Sign in
+    </button>
+
+    <div
+      id="loginError"
+      class="login-error"
+    ></div>
+
+  </div>
+
 </div>
 
-<div id="panel" style="display:none">
-<div class="section-head"><div><span class="kicker">CONTROL ROOM</span><h1>PromptForge Admin</h1></div><button id="logout" class="pill">Logout</button></div>
 
-<div class="admin-nav">
-<button class="admin-tab active" data-tab="dashboard">Dashboard</button>
-<button class="admin-tab" data-tab="providers">API Providers</button>
-<button class="admin-tab" data-tab="auto">Automatic Posting</button>
-<button class="admin-tab" data-tab="ads">Ads</button>
-</div>
+<!-- =====================================================
+     ADMIN PANEL
+===================================================== -->
 
-<section id="dashboard" class="admin-section active">
-<div class="card" style="padding:20px"><h2>Publish prompt</h2>
-<input id="title" placeholder="Title" class="field">
-<textarea id="prompt" placeholder="Prompt text" class="field" rows="7"></textarea>
-<div class="two"><input id="model" placeholder="Model" class="field"><input id="category" placeholder="Category" class="field"></div>
-<div class="two"><select id="media" class="field"><option>Image</option><option>Video</option><option>Writing</option></select><input id="imageUrl" placeholder="Preview image URL (optional)" class="field"></div>
-<button id="publish" class="copy">Publish now</button><span id="publishStatus" class="status muted"></span></div>
+<main
+  id="adminPanel"
+  class="admin-wrap hidden"
+>
 
-<h2 style="margin-top:28px">Published prompts</h2><div id="list"></div>
-</section>
+  <div class="admin-top">
 
-<section id="providers" class="admin-section">
-<div class="card" style="padding:20px"><span class="kicker">API SYSTEM</span><h2>Add API Provider</h2>
-<p class="muted small">Add your provider key here. The key stays server-side and is never shown to visitors.</p>
-<select id="providerCategory" class="field"><option value="trending_search">Trending Search</option><option value="prompt_generate">Prompt Generate</option><option value="photo_generate">Photo Generate</option></select>
-<input id="providerName" class="field" placeholder="Provider name e.g. NewsData.io, Gemini, Hugging Face">
-<input id="providerKey" class="field" type="password" placeholder="Paste API key">
-<label class="switchline"><input id="providerEnabled" type="checkbox" checked> Enabled</label>
-<button id="addProvider" class="copy">Add Provider</button><span id="providerStatus" class="status muted"></span>
-</div>
+    <div>
+      <span class="kicker">
+        CONTROL ROOM
+      </span>
 
-<div class="card" style="padding:20px;margin-top:16px"><h2>Configured Providers</h2><div id="providerList"></div></div>
-</section>
+      <h1 class="admin-title">
+        PromptForge Admin
+      </h1>
 
-<section id="auto" class="admin-section">
-<div class="card" style="padding:20px"><span class="kicker">AUTOMATION</span><h2>Automatic Posting</h2>
-<label class="switchline"><input id="autoEnabled" type="checkbox"> Enable automatic posting</label>
-<div class="grid3"><label class="small">Interval (minutes)<input id="interval" class="field" type="number" min="5" value="60"></label><label class="small">Posts per run<input id="postsPerRun" class="field" type="number" min="1" max="20" value="1"></label><label class="small">Copy gate seconds<input id="copyGate" class="field" type="number" min="0" max="300" value="10"></label></div>
-<label class="small">Direct link for copy gate<input id="directLink" class="field" placeholder="https://..."></label>
-<button id="saveSettings" class="copy">Save settings</button><button id="runNow" class="pill">Run now</button><span id="settingsStatus" class="status muted"></span>
-<p class="muted small">Recommended: 60 minutes / 1 post per run. If one API fails, the server tries the next enabled provider in that category.</p>
-</div>
-</section>
+      <div class="muted2">
+        AI generation · API rotation · automation
+      </div>
+    </div>
 
-<section id="ads" class="admin-section">
-<div class="card" style="padding:20px"><span class="kicker">MONETIZATION</span><h2>Ads Manager</h2><p class="muted small">Ads are separate from API Providers. Paste only trusted ad-network code.</p><div id="adsBox"></div><button id="saveAds" class="copy">Save ads</button><span id="adsStatus" class="status muted"></span></div>
-</section>
-</div>
+    <div style="display:flex;gap:8px">
+
+      <a
+        href="/"
+        class="btn"
+        style="text-decoration:none"
+      >
+        View site
+      </a>
+
+      <button
+        id="logoutBtn"
+        class="btn"
+      >
+        Logout
+      </button>
+
+    </div>
+
+  </div>
+
+
+  <!-- ===================================================
+       API PROVIDERS
+  ==================================================== -->
+
+  <section class="admin-card">
+
+    <div class="category-head">
+
+      <div>
+        <span class="kicker">
+          API SYSTEM
+        </span>
+
+        <h2>
+          Unlimited API Providers
+        </h2>
+
+        <p class="muted2">
+          Add as many APIs as you want.
+          Each category has its own automatic rotation.
+        </p>
+      </div>
+
+    </div>
+
+
+    <div class="api-help">
+
+      <strong>How rotation works:</strong><br>
+
+      API 1 → Post 1<br>
+      API 2 → Post 2<br>
+      API 3 → Post 3<br>
+      API 1 → Post 4<br><br>
+
+      যদি কোনো API fail করে, system
+      automatically পরের enabled API try করবে।
+
+    </div>
+
+
+    <!-- ADD API -->
+
+    <div
+      style="
+        border:1px solid #302f38;
+        border-radius:15px;
+        padding:16px;
+        margin-top:15px
+      "
+    >
+
+      <h3>
+        + Add API
+      </h3>
+
+      <div class="grid2">
+
+        <div>
+
+          <label class="muted2">
+            Category
+          </label>
+
+          <select
+            id="providerCategory"
+            class="field"
+          >
+
+            <option value="trending_search">
+              Trending Search
+            </option>
+
+            <option value="prompt_generate">
+              Prompt Generate
+            </option>
+
+            <option value="photo_generate">
+              Photo / Image Generate
+            </option>
+
+          </select>
+
+        </div>
+
+
+        <div>
+
+          <label class="muted2">
+            Provider
+          </label>
+
+          <select
+            id="providerPreset"
+            class="field"
+          ></select>
+
+        </div>
+
+      </div>
+
+
+      <input
+        id="providerName"
+        class="field"
+        placeholder="Provider name"
+      >
+
+
+      <input
+        id="providerApiKey"
+        class="field"
+        type="password"
+        placeholder="API key / Bearer token"
+        autocomplete="new-password"
+      >
+
+
+      <label class="check-row">
+
+        <input
+          id="providerEnabled"
+          type="checkbox"
+          checked
+        >
+
+        Enable this API
+
+      </label>
+
+
+      <div
+        id="providerHelp"
+        class="api-help"
+      ></div>
+
+
+      <button
+        id="addProviderBtn"
+        class="btn btn-primary"
+      >
+        Add API Provider
+      </button>
+
+    </div>
+
+
+    <!-- TRENDING -->
+
+    <div style="margin-top:25px">
+
+      <div class="category-head">
+
+        <div class="category-title">
+
+          <span class="category-dot"></span>
+
+          <div>
+            <strong>
+              Trending Search
+            </strong>
+
+            <div class="muted2">
+              News + Social Media + Trend sources
+            </div>
+          </div>
+
+        </div>
+
+        <span
+          id="trendingCount"
+          class="counter"
+        >
+          0 APIs
+        </span>
+
+      </div>
+
+
+      <div
+        id="trendingProviders"
+        class="provider-list"
+      ></div>
+
+
+      <div class="rotation-box">
+
+        <strong>
+          Rotation
+        </strong>
+
+        <div
+          id="trendingRotation"
+          class="rotation-flow"
+        ></div>
+
+      </div>
+
+    </div>
+
+
+    <!-- PROMPT -->
+
+    <div style="margin-top:25px">
+
+      <div class="category-head">
+
+        <div class="category-title">
+
+          <span class="category-dot"></span>
+
+          <div>
+            <strong>
+              Prompt Generate
+            </strong>
+
+            <div class="muted2">
+              AI prompt generation providers
+            </div>
+          </div>
+
+        </div>
+
+        <span
+          id="promptCount"
+          class="counter"
+        >
+          0 APIs
+        </span>
+
+      </div>
+
+
+      <div
+        id="promptProviders"
+        class="provider-list"
+      ></div>
+
+
+      <div class="rotation-box">
+
+        <strong>
+          Rotation
+        </strong>
+
+        <div
+          id="promptRotation"
+          class="rotation-flow"
+        ></div>
+
+      </div>
+
+    </div>
+
+
+    <!-- PHOTO -->
+
+    <div style="margin-top:25px">
+
+      <div class="category-head">
+
+        <div class="category-title">
+
+          <span class="category-dot"></span>
+
+          <div>
+            <strong>
+              Photo / Image Generate
+            </strong>
+
+            <div class="muted2">
+              AI image generation providers
+            </div>
+          </div>
+
+        </div>
+
+        <span
+          id="photoCount"
+          class="counter"
+        >
+          0 APIs
+        </span>
+
+      </div>
+
+
+      <div
+        id="photoProviders"
+        class="provider-list"
+      ></div>
+
+
+      <div class="rotation-box">
+
+        <strong>
+          Rotation
+        </strong>
+
+        <div
+          id="photoRotation"
+          class="rotation-flow"
+        ></div>
+
+      </div>
+
+    </div>
+
+  </section>
+
+
+  <!-- ===================================================
+       AUTOMATIC POSTING
+  ==================================================== -->
+
+  <section class="admin-card">
+
+    <span class="kicker">
+      AUTOMATION
+    </span>
+
+    <h2>
+      Automatic Posting
+    </h2>
+
+    <p class="muted2">
+      Trend → Prompt → Image → Cloudinary → Supabase → Publish
+    </p>
+
+
+    <label class="check-row">
+
+      <input
+        id="autoPost"
+        type="checkbox"
+      >
+
+      Enable automatic posting
+
+    </label>
+
+
+    <div class="grid3">
+
+      <div>
+
+        <label class="muted2">
+          Interval (minutes)
+        </label>
+
+        <input
+          id="postInterval"
+          class="field"
+          type="number"
+          min="1"
+          value="60"
+        >
+
+      </div>
+
+
+      <div>
+
+        <label class="muted2">
+          Posts per run
+        </label>
+
+        <input
+          id="postsPerRun"
+          class="field"
+          type="number"
+          min="1"
+          max="10"
+          value="1"
+        >
+
+      </div>
+
+
+      <div>
+
+        <label class="muted2">
+          Copy gate seconds
+        </label>
+
+        <input
+          id="copyGate"
+          class="field"
+          type="number"
+          min="0"
+          value="10"
+        >
+
+      </div>
+
+    </div>
+
+
+    <label class="muted2">
+      Direct link / Copy gate URL
+    </label>
+
+    <input
+      id="directLink"
+      class="field"
+      placeholder="https://example.com/..."
+    >
+
+
+    <div
+      style="
+        display:flex;
+        gap:8px;
+        flex-wrap:wrap;
+        margin-top:8px
+      "
+    >
+
+      <button
+        id="saveSettingsBtn"
+        class="btn btn-primary"
+      >
+        Save Settings
+      </button>
+
+      <button
+        id="runNowBtn"
+        class="btn btn-success"
+      >
+        Run Now
+      </button>
+
+    </div>
+
+
+    <div
+      id="automationStatus"
+      class="api-help"
+      style="margin-top:15px"
+    >
+      Ready.
+    </div>
+
+  </section>
+
+
+  <!-- ===================================================
+       MANUAL PUBLISH
+  ==================================================== -->
+
+  <section class="admin-card">
+
+    <span class="kicker">
+      MANUAL
+    </span>
+
+    <h2>
+      Publish Prompt
+    </h2>
+
+    <input
+      id="manualTitle"
+      class="field"
+      placeholder="Title"
+    >
+
+    <textarea
+      id="manualPrompt"
+      class="field"
+      rows="7"
+      placeholder="Prompt"
+    ></textarea>
+
+
+    <div class="grid2">
+
+      <input
+        id="manualModel"
+        class="field"
+        placeholder="Model"
+      >
+
+      <input
+        id="manualCategory"
+        class="field"
+        placeholder="Category"
+      >
+
+    </div>
+
+
+    <div class="grid2">
+
+      <select
+        id="manualMedia"
+        class="field"
+      >
+        <option>Image</option>
+        <option>Video</option>
+        <option>Writing</option>
+      </select>
+
+
+      <input
+        id="manualImageUrl"
+        class="field"
+        placeholder="Image URL"
+      >
+
+    </div>
+
+
+    <button
+      id="manualPublishBtn"
+      class="btn btn-primary"
+    >
+      Publish Now
+    </button>
+
+  </section>
+
+
+  <!-- ===================================================
+       ADS
+  ==================================================== -->
+
+  <section class="admin-card">
+
+    <span class="kicker">
+      MONETIZATION
+    </span>
+
+    <h2>
+      Ads Manager
+    </h2>
+
+    <p class="muted2">
+      API settings-এর সাথে ads আলাদা রাখা হয়েছে।
+    </p>
+
+
+    <div id="adsBox"></div>
+
+
+    <button
+      id="saveAdsBtn"
+      class="btn btn-primary"
+    >
+      Save Ads
+    </button>
+
+  </section>
+
+
+  <!-- ===================================================
+       PUBLISHED POSTS
+  ==================================================== -->
+
+  <section class="admin-card">
+
+    <div class="category-head">
+
+      <div>
+
+        <span class="kicker">
+          CONTENT
+        </span>
+
+        <h2>
+          Published Posts
+        </h2>
+
+      </div>
+
+      <button
+        id="refreshPostsBtn"
+        class="btn"
+      >
+        Refresh
+      </button>
+
+    </div>
+
+
+    <div
+      id="postsList"
+    ></div>
+
+  </section>
+
 </main>
+
+
+<div
+  id="toast"
+  class="toast"
+></div>
+
+
 <script>
-const $=id=>document.getElementById(id);
-const esc=s=>String(s??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[m]));
+/* =========================================================
+   HELPERS
+========================================================= */
 
-async function api(url,options={}){const r=await fetch(url,options);let x={};try{x=await r.json()}catch{};if(r.status===401){location.reload();throw new Error('Unauthorized')}if(!r.ok)throw new Error(x.error||'Request failed');return x}
+const $ = id =>
+  document.getElementById(id);
 
-function showPanel(){ $('login').style.display='none'; $('panel').style.display='block'; loadAll(); }
+function esc(value) {
+  return String(
+    value ?? ''
+  ).replace(
+    /[&<>"']/g,
+    char => ({
+      '&': '&amp;',
+      '<': '&lt;',
+      '>': '&gt;',
+      '"': '&quot;',
+      "'": '&#039;'
+    }[char])
+  );
+}
 
-$('loginBtn').onclick=async()=>{try{await api('/api/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username:$('user').value,password:$('pass').value})});showPanel()}catch(e){$('err').textContent=e.message}};
-$('pass').addEventListener('keydown',e=>{if(e.key==='Enter')$('loginBtn').click()});
-$('logout').onclick=async()=>{await fetch('/api/logout',{method:'POST'});location.reload()};
+function showToast(
+  message
+) {
+  const toast =
+    $('toast');
 
-document.querySelectorAll('.admin-tab').forEach(btn=>btn.onclick=()=>{document.querySelectorAll('.admin-tab').forEach(x=>x.classList.remove('active'));document.querySelectorAll('.admin-section').forEach(x=>x.classList.remove('active'));btn.classList.add('active');$(btn.dataset.tab).classList.add('active')});
+  toast.textContent =
+    message;
 
-$('publish').onclick=async()=>{try{await api('/api/admin/prompts',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({title:$('title').value,prompt:$('prompt').value,model:$('model').value,category:$('category').value,media:$('media').value,imageUrl:$('imageUrl').value})});$('publishStatus').textContent='Published ✓';$('title').value='';$('prompt').value='';loadPrompts()}catch(e){$('publishStatus').textContent=e.message}};
+  toast.classList.add(
+    'show'
+  );
 
-async function loadPrompts(){try{const items=await api('/api/admin/prompts');$('list').innerHTML=items.slice(0,100).map(p=>`<div class="card" style="padding:14px;margin:8px 0;display:flex;justify-content:space-between;gap:15px;align-items:center"><span><b>${esc(p.title)}</b><br><small class="muted">${esc(p.media)} · ${esc(p.category)} · ${p.auto?'AUTO':'MANUAL'}</small></span><button class="pill danger" onclick="delPrompt('${esc(p.id)}')">Delete</button></div>`).join('')||'<p class="muted">No prompts yet.</p>'}catch(e){$('list').textContent=e.message}}
-window.delPrompt=async id=>{if(!confirm('Delete this prompt?'))return;await api('/api/admin/prompts/'+encodeURIComponent(id),{method:'DELETE'});loadPrompts()};
+  clearTimeout(
+    showToast.timer
+  );
 
-$('addProvider').onclick=async()=>{try{const data={category:$('providerCategory').value,provider_name:$('providerName').value.trim(),api_key:$('providerKey').value.trim(),enabled:$('providerEnabled').checked};await api('/api/admin/providers',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)});$('providerKey').value='';$('providerStatus').textContent='Added ✓';loadProviders()}catch(e){$('providerStatus').textContent=e.message}};
+  showToast.timer =
+    setTimeout(
+      () =>
+        toast.classList.remove(
+          'show'
+        ),
+      2800
+    );
+}
 
-async function loadProviders(){try{const ps=await api('/api/admin/providers');if(!ps.length){$('providerList').innerHTML='<p class="muted">No API providers configured.</p>';return}$('providerList').innerHTML=ps.map(p=>`<div class="provider-row"><div class="provider-meta"><div><b>${esc(p.provider_name)}</b><br><small class="muted">${esc(p.category)} · ${p.enabled?'Enabled':'Disabled'}</small></div><button class="pill danger" onclick="removeProvider('${esc(p.id)}')">Delete</button></div></div>`).join('')}catch(e){$('providerList').textContent=e.message}}
-window.removeProvider=async id=>{if(!confirm('Delete this API provider?'))return;await api('/api/admin/providers/'+encodeURIComponent(id),{method:'DELETE'});loadProviders()};
+async function jsonFetch(
+  url,
+  options = {}
+) {
+  const response =
+    await fetch(
+      url,
+      options
+    );
 
-async function loadSettings(){try{const s=await api('/api/admin/settings');$('autoEnabled').checked=s.autoPost!==undefined?!!s.autoPost:!!s.autoPostEnabled;$('interval').value=s.postIntervalMinutes||60;$('postsPerRun').value=s.postsPerRun||1;$('copyGate').value=s.copyGateSeconds??10;$('directLink').value=s.directLink||''}catch(e){$('settingsStatus').textContent=e.message}}
-$('saveSettings').onclick=async()=>{try{await api('/api/admin/settings',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({autoPost:$('autoEnabled').checked,autoPostEnabled:$('autoEnabled').checked,postIntervalMinutes:+$('interval').value,postsPerRun:+$('postsPerRun').value,copyGateSeconds:+$('copyGate').value,directLink:$('directLink').value.trim()})});$('settingsStatus').textContent='Saved ✓'}catch(e){$('settingsStatus').textContent=e.message}};
-$('runNow').onclick=async()=>{try{const x=await api('/api/admin/collect',{method:'POST'});$('settingsStatus').textContent=`Finished: ${x.added||0} post(s) added.`;loadPrompts()}catch(e){$('settingsStatus').textContent=e.message}};
+  let data = {};
 
-const SLOTS=[['head_code','Head code / verification',0],['popunder','Popunder script',0],['social_bar','Social Bar / Push script',0],['banner_top','Banner: top',1],['banner_middle','Banner: middle',1],['banner_bottom','Banner: bottom',1],['modal_banner','Banner: inside prompt popup',1],['native_banner','Native banner',1]];
-async function loadAds(){try{const a=await api('/api/admin/ads');$('adsBox').innerHTML=SLOTS.map(([k,label,hasHeight])=>{const x=a[k]||{enabled:false,code:'',height:0};return `<div class="ad-row"><label class="switchline"><input type="checkbox" id="ad_${k}_on" ${x.enabled?'checked':''}> <b>${label}</b></label><textarea id="ad_${k}" class="field codebox" rows="4" placeholder="Paste ad code here">${esc(x.code||'')}</textarea>${hasHeight?`<input id="ad_${k}_h" class="field" type="number" placeholder="Height in px" value="${Number(x.height||90)}">`:''}</div>`}).join('')}catch(e){$('adsBox').textContent=e.message}}
-$('saveAds').onclick=async()=>{try{const b={};SLOTS.forEach(([k,,hasHeight])=>b[k]={enabled:$('ad_'+k+'_on').checked,code:$('ad_'+k).value,height:hasHeight?Number($('ad_'+k+'_h').value||90):0});await api('/api/admin/ads',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(b)});$('adsStatus').textContent='Ads saved ✓'}catch(e){$('adsStatus').textContent=e.message}};
+  try {
+    data =
+      await response.json();
+  } catch {}
 
-async function loadAll(){await Promise.all([loadPrompts(),loadProviders(),loadSettings(),loadAds()])}
-(async()=>{try{const x=await api('/api/admin/me');if(x.authenticated)showPanel()}catch{}})();
+  if (
+    response.status === 401
+  ) {
+    location.reload();
+    throw new Error(
+      'Unauthorized'
+    );
+  }
+
+  return {
+    response,
+    data
+  };
+}
+
+
+/* =========================================================
+   PROVIDER PRESETS
+========================================================= */
+
+const PROVIDER_PRESETS = {
+
+  trending_search: [
+
+    {
+      name: 'NewsData.io',
+      help:
+        'NewsData.io API key. Used only as a trend signal.'
+    },
+
+    {
+      name: 'GNews',
+      help:
+        'GNews API key. Used only as a trend signal.'
+    },
+
+    {
+      name: 'Reddit',
+      help:
+        'Reddit API token can be used for Reddit trend discovery.'
+    },
+
+    {
+      name: 'YouTube',
+      help:
+        'YouTube Data API v3 key.'
+    },
+
+    {
+      name: 'X/Twitter',
+      help:
+        'X API Bearer Token.'
+    },
+
+    {
+      name: 'Bluesky',
+      help:
+        'Public Bluesky trend source. API key is not required.'
+    },
+
+    {
+      name: 'Custom',
+      help:
+        'Custom provider. Server-side adapter must exist before it can fetch data.'
+    }
+
+  ],
+
+  prompt_generate: [
+
+    {
+      name: 'Gemini',
+      help:
+        'Google Gemini API key. Current integration uses Gemini 3.5 Flash Lite.'
+    },
+
+    {
+      name: 'Custom',
+      help:
+        'Custom prompt provider. A server-side adapter is required.'
+    }
+
+  ],
+
+  photo_generate: [
+
+    {
+      name: 'Pollinations',
+      help:
+        'Pollinations image generation. Current integration does not require an API key.'
+    },
+
+    {
+      name: 'Hugging Face',
+      help:
+        'Hugging Face API token for image generation.'
+    },
+
+    {
+      name: 'Custom',
+      help:
+        'Custom image provider. A server-side adapter is required.'
+    }
+
+  ]
+
+};
+
+
+function updateProviderPresets() {
+
+  const category =
+    $('providerCategory')
+      .value;
+
+  const select =
+    $('providerPreset');
+
+  const providers =
+    PROVIDER_PRESETS[
+      category
+    ] || [];
+
+  select.innerHTML =
+    providers
+      .map(
+        p =>
+          `<option value="${esc(
+            p.name
+          )}">${esc(
+            p.name
+          )}</option>`
+      )
+      .join('');
+
+  updateProviderPresetInfo();
+}
+
+
+function updateProviderPresetInfo() {
+
+  const category =
+    $('providerCategory')
+      .value;
+
+  const name =
+    $('providerPreset')
+      .value;
+
+  const item =
+    (
+      PROVIDER_PRESETS[
+        category
+      ] || []
+    ).find(
+      p =>
+        p.name === name
+    );
+
+  if (!item) {
+    $('providerHelp')
+      .textContent = '';
+    return;
+  }
+
+  $('providerName')
+    .value =
+      item.name;
+
+  $('providerHelp')
+    .innerHTML =
+      `<strong>${esc(
+        item.name
+      )}</strong><br>${esc(
+        item.help
+      )}`;
+
+  if (
+    item.name ===
+    'Bluesky'
+  ) {
+    $('providerApiKey')
+      .placeholder =
+        'No API key required';
+  }
+
+  else if (
+    item.name ===
+    'Pollinations'
+  ) {
+    $('providerApiKey')
+      .placeholder =
+        'No API key required';
+  }
+
+  else {
+    $('providerApiKey')
+      .placeholder =
+        'API key / Bearer token';
+  }
+}
+
+
+/* =========================================================
+   LOGIN
+========================================================= */
+
+async function checkLogin() {
+
+  try {
+
+    const {
+      response,
+      data
+    } =
+      await jsonFetch(
+        '/api/admin/me'
+      );
+
+    if (
+      response.ok &&
+      data.authenticated
+    ) {
+      showPanel();
+    }
+
+  } catch (error) {
+    console.error(error);
+  }
+}
+
+
+function showPanel() {
+
+  $('loginScreen')
+    .classList.add(
+      'hidden'
+    );
+
+  $('adminPanel')
+    .classList.remove(
+      'hidden'
+    );
+
+  loadAll();
+}
+
+
+$('loginBtn')
+  .addEventListener(
+    'click',
+    async () => {
+
+      const username =
+        $('loginUsername')
+          .value
+          .trim();
+
+      const password =
+        $('loginPassword')
+          .value;
+
+      $('loginError')
+        .textContent =
+          '';
+
+      const {
+        response,
+        data
+      } =
+        await jsonFetch(
+          '/api/login',
+          {
+            method:
+              'POST',
+
+            headers: {
+              'Content-Type':
+                'application/json'
+            },
+
+            body:
+              JSON.stringify({
+                username,
+                password
+              })
+          }
+        );
+
+      if (
+        response.ok
+      ) {
+        showPanel();
+      } else {
+        $('loginError')
+          .textContent =
+            data.error ||
+            'Login failed.';
+      }
+
+    }
+  );
+
+
+$('loginPassword')
+  .addEventListener(
+    'keydown',
+    event => {
+
+      if (
+        event.key ===
+        'Enter'
+      ) {
+        $('loginBtn')
+          .click();
+      }
+
+    }
+  );
+
+
+$('logoutBtn')
+  .addEventListener(
+    'click',
+    async () => {
+
+      await fetch(
+        '/api/logout',
+        {
+          method:
+            'POST'
+        }
+      );
+
+      location.reload();
+
+    }
+  );
+
+
+/* =========================================================
+   API PROVIDERS
+========================================================= */
+
+let providerCache = [];
+
+
+async function loadProviders() {
+
+  const {
+    response,
+    data
+  } =
+    await jsonFetch(
+      '/api/admin/providers'
+    );
+
+  if (!response.ok) {
+    throw new Error(
+      data.error ||
+      'Failed to load providers.'
+    );
+  }
+
+  providerCache =
+    Array.isArray(data)
+      ? data
+      : [];
+
+  renderProviders();
+}
+
+
+function renderProviders() {
+
+  renderProviderCategory(
+    'trending_search',
+    'trendingProviders',
+    'trendingCount',
+    'trendingRotation'
+  );
+
+  renderProviderCategory(
+    'prompt_generate',
+    'promptProviders',
+    'promptCount',
+    'promptRotation'
+  );
+
+  renderProviderCategory(
+    'photo_generate',
+    'photoProviders',
+    'photoCount',
+    'photoRotation'
+  );
+}
+
+
+function renderProviderCategory(
+  category,
+  containerId,
+  countId,
+  rotationId
+) {
+
+  const items =
+    providerCache.filter(
+      p =>
+        p.category ===
+        category
+    );
+
+  $(countId)
+    .textContent =
+      `${items.length} API${
+        items.length === 1
+          ? ''
+          : 's'
+      }`;
+
+  if (!items.length) {
+
+    $(containerId)
+      .innerHTML =
+        `
+          <div class="api-help">
+            No API added yet.
+          </div>
+        `;
+
+  } else {
+
+    $(containerId)
+      .innerHTML =
+        items
+          .map(
+            (p, index) =>
+              `
+                <div
+                  class="provider-item"
+                >
+
+                  <div
+                    class="provider-left"
+                  >
+
+                    <div
+                      class="provider-name"
+                    >
+                      ${esc(
+                        p.providerName
+                      )}
+                    </div>
+
+                    <div
+                      class="provider-meta"
+                    >
+                      ${esc(
+                        p.category
+                      )}
+                      ·
+                      API ${
+                        index + 1
+                      }
+
+                      ${
+                        p.apiKey
+                          ? ' · Key configured'
+                          : ' · Public'
+                      }
+                    </div>
+
+                  </div>
+
+
+                  <div
+                    class="provider-actions"
+                  >
+
+                    <span
+                      class="status ${
+                        p.enabled
+                          ? 'on'
+                          : 'off'
+                      }"
+                    >
+                      ${
+                        p.enabled
+                          ? 'Enabled'
+                          : 'Disabled'
+                      }
+                    </span>
+
+
+                    <button
+                      class="btn"
+                      onclick="toggleProvider('${
+                        esc(
+                          p.id
+                        )
+                      }')"
+                    >
+                      ${
+                        p.enabled
+                          ? 'Disable'
+                          : 'Enable'
+                      }
+                    </button>
+
+
+                    <button
+                      class="btn btn-danger"
+                      onclick="removeProvider('${
+                        esc(
+                          p.id
+                        )
+                      }')"
+                    >
+                      Delete
+                    </button>
+
+                  </div>
+
+                </div>
+              `
+          )
+          .join('');
+
+  }
+
+
+  const active =
+    items.filter(
+      p => p.enabled
+    );
+
+  if (!active.length) {
+
+    $(rotationId)
+      .innerHTML =
+        `<span class="muted2">
+          No enabled APIs
+        </span>`;
+
+    return;
+  }
+
+
+  $(rotationId)
+    .innerHTML =
+      active
+        .map(
+          (p, i) =>
+            `
+              <span class="rotation-item">
+                API ${i + 1}:
+                ${esc(
+                  p.providerName
+                )}
+              </span>
+
+              ${
+                i <
+                active.length - 1
+                  ? '<span class="arrow">→</span>'
+                  : '<span class="arrow">→ API 1</span>'
+              }
+            `
+        )
+        .join('');
+
+}
+
+
+async function toggleProvider(
+  id
+) {
+
+  const item =
+    providerCache.find(
+      p =>
+        String(p.id) ===
+        String(id)
+    );
+
+  if (!item) {
+    return;
+  }
+
+  /*
+    Current server API doesn't expose a separate
+    update-provider endpoint.
+
+    Therefore toggle is implemented by deleting
+    and recreating the provider with the opposite
+    enabled state.
+  */
+
+  const {
+    response
+  } =
+    await jsonFetch(
+      `/api/admin/providers/${encodeURIComponent(
+        id
+      )}`,
+      {
+        method:
+          'DELETE'
+      }
+    );
+
+  if (!response.ok) {
+    showToast(
+      'Could not update provider.'
+    );
+    return;
+  }
+
+  await jsonFetch(
+    '/api/admin/providers',
+    {
+      method:
+        'POST',
+
+      headers: {
+        'Content-Type':
+          'application/json'
+      },
+
+      body:
+        JSON.stringify({
+          category:
+            item.category,
+
+          providerName:
+            item.providerName,
+
+          apiKey:
+            item.apiKey,
+
+          enabled:
+            !item.enabled
+        })
+    }
+  );
+
+  showToast(
+    `${item.providerName} ${
+      item.enabled
+        ? 'disabled'
+        : 'enabled'
+    }`
+  );
+
+  await loadProviders();
+}
+
+
+async function removeProvider(
+  id
+) {
+
+  const item =
+    providerCache.find(
+      p =>
+        String(p.id) ===
+        String(id)
+    );
+
+  if (!item) {
+    return;
+  }
+
+  if (
+    !confirm(
+      `Delete ${item.providerName}?`
+    )
+  ) {
+    return;
+  }
+
+  const {
+    response,
+    data
+  } =
+    await jsonFetch(
+      `/api/admin/providers/${encodeURIComponent(
+        id
+      )}`,
+      {
+        method:
+          'DELETE'
+      }
+    );
+
+  if (
+    response.ok
+  ) {
+
+    showToast(
+      'API deleted.'
+    );
+
+    await loadProviders();
+
+  } else {
+
+    showToast(
+      data.error ||
+      'Delete failed.'
+    );
+
+  }
+}
+
+
+$('addProviderBtn')
+  .addEventListener(
+    'click',
+    async () => {
+
+      const category =
+        $('providerCategory')
+          .value;
+
+      const providerName =
+        $('providerName')
+          .value
+          .trim();
+
+      const apiKey =
+        $('providerApiKey')
+          .value
+          .trim();
+
+      const enabled =
+        $('providerEnabled')
+          .checked;
+
+      if (!providerName) {
+        showToast(
+          'Provider name required.'
+        );
+        return;
+      }
+
+      const noKeyProviders = [
+        'Bluesky',
+        'Pollinations'
+      ];
+
+      if (
+        !apiKey &&
+        !noKeyProviders.includes(
+          providerName
+        )
+      ) {
+        showToast(
+          'API key/token required.'
+        );
+        return;
+      }
+
+      const {
+        response,
+        data
+      } =
+        await jsonFetch(
+          '/api/admin/providers',
+          {
+            method:
+              'POST',
+
+            headers: {
+              'Content-Type':
+                'application/json'
+            },
+
+            body:
+              JSON.stringify({
+                category,
+                providerName,
+                apiKey,
+                enabled
+              })
+          }
+        );
+
+      if (
+        response.ok
+      ) {
+
+        showToast(
+          `${providerName} added.`
+        );
+
+        $('providerApiKey')
+          .value = '';
+
+        await loadProviders();
+
+      } else {
+
+        showToast(
+          data.error ||
+          'Failed to add API.'
+        );
+
+      }
+
+    }
+  );
+
+
+$('providerCategory')
+  .addEventListener(
+    'change',
+    updateProviderPresets
+  );
+
+
+$('providerPreset')
+  .addEventListener(
+    'change',
+    updateProviderPresetInfo
+  );
+
+
+/* =========================================================
+   SETTINGS
+========================================================= */
+
+async function loadSettings() {
+
+  const {
+    response,
+    data
+  } =
+    await jsonFetch(
+      '/api/admin/settings'
+    );
+
+  if (!response.ok) {
+    return;
+  }
+
+  $('autoPost')
+    .checked =
+      !!data.autoPost;
+
+  $('postInterval')
+    .value =
+      Number(
+        data.postIntervalMinutes ||
+        60
+      );
+
+  $('postsPerRun')
+    .value =
+      Number(
+        data.postsPerRun ||
+        1
+      );
+
+  $('copyGate')
+    .value =
+      Number(
+        data.copyGateSeconds ??
+        10
+      );
+
+  $('directLink')
+    .value =
+      data.directLink ||
+      '';
+
+  updateAutomationStatus();
+}
+
+
+function updateAutomationStatus() {
+
+  const enabled =
+    $('autoPost')
+      .checked;
+
+  $('automationStatus')
+    .innerHTML =
+      enabled
+        ? `
+          <strong style="color:#8ef0a8">
+            Automatic posting is ON
+          </strong>
+          <br>
+          Every
+          ${esc(
+            $('postInterval').value
+          )}
+          minute(s),
+          ${esc(
+            $('postsPerRun').value
+          )}
+          post(s) per run.
+        `
+        : `
+          <strong>
+            Automatic posting is OFF
+          </strong>
+        `;
+}
+
+
+$('autoPost')
+  .addEventListener(
+    'change',
+    updateAutomationStatus
+  );
+
+$('postInterval')
+  .addEventListener(
+    'input',
+    updateAutomationStatus
+  );
+
+$('postsPerRun')
+  .addEventListener(
+    'input',
+    updateAutomationStatus
+  );
+
+
+$('saveSettingsBtn')
+  .addEventListener(
+    'click',
+    async () => {
+
+      const body = {
+
+        autoPost:
+          $('autoPost')
+            .checked,
+
+        postIntervalMinutes:
+          Number(
+            $('postInterval')
+              .value || 60
+          ),
+
+        postsPerRun:
+          Number(
+            $('postsPerRun')
+              .value || 1
+          ),
+
+        copyGateSeconds:
+          Number(
+            $('copyGate')
+              .value || 10
+          ),
+
+        directLink:
+          $('directLink')
+            .value
+            .trim()
+
+      };
+
+      const {
+        response,
+        data
+      } =
+        await jsonFetch(
+          '/api/admin/settings',
+          {
+            method:
+              'POST',
+
+            headers: {
+              'Content-Type':
+                'application/json'
+            },
+
+            body:
+              JSON.stringify(body)
+          }
+        );
+
+      if (
+        response.ok
+      ) {
+
+        showToast(
+          'Settings saved.'
+        );
+
+        updateAutomationStatus();
+
+      } else {
+
+        showToast(
+          data.error ||
+          'Save failed.'
+        );
+
+      }
+
+    }
+  );
+
+
+/* =========================================================
+   RUN NOW
+========================================================= */
+
+$('runNowBtn')
+  .addEventListener(
+    'click',
+    async () => {
+
+      const button =
+        $('runNowBtn');
+
+      button.disabled =
+        true;
+
+      button.textContent =
+        'Running...';
+
+      $('automationStatus')
+        .textContent =
+          'Generating trend → prompt → image...';
+
+      try {
+
+        const {
+          response,
+          data
+        } =
+          await jsonFetch(
+            '/api/admin/collect',
+            {
+              method:
+                'POST'
+            }
+          );
+
+        if (
+          response.ok
+        ) {
+
+          showToast(
+            `Run finished. Added ${
+              data.added || 0
+            } post(s).`
+          );
+
+          $('automationStatus')
+            .textContent =
+              `Run finished. Added ${
+                data.added || 0
+              } post(s).`;
+
+          await loadPosts();
+
+        } else {
+
+          showToast(
+            data.error ||
+            'Run failed.'
+          );
+
+          $('automationStatus')
+            .textContent =
+              data.error ||
+              'Run failed.';
+
+        }
+
+      } catch (error) {
+
+        showToast(
+          error.message
+        );
+
+      } finally {
+
+        button.disabled =
+          false;
+
+        button.textContent =
+          'Run Now';
+
+      }
+
+    }
+  );
+
+
+/* =========================================================
+   ADS
+========================================================= */
+
+const AD_SLOTS = [
+
+  [
+    'head_code',
+    'Head Code',
+    0
+  ],
+
+  [
+    'popunder',
+    'Popunder',
+    0
+  ],
+
+  [
+    'social_bar',
+    'Social Bar / Push',
+    0
+  ],
+
+  [
+    'banner_top',
+    'Top Banner',
+    1
+  ],
+
+  [
+    'banner_middle',
+    'Middle Banner',
+    1
+  ],
+
+  [
+    'banner_bottom',
+    'Bottom Banner',
+    1
+  ],
+
+  [
+    'modal_banner',
+    'Modal Banner',
+    1
+  ],
+
+  [
+    'native_banner',
+    'Native Banner',
+    1
+  ]
+
+];
+
+
+async function loadAds() {
+
+  const {
+    response,
+    data
+  } =
+    await jsonFetch(
+      '/api/admin/ads'
+    );
+
+  if (!response.ok) {
+    return;
+  }
+
+  const ads =
+    data || {};
+
+  $('adsBox')
+    .innerHTML =
+      AD_SLOTS
+        .map(
+          ([key, label, hasHeight]) => {
+
+            const item =
+              ads[key] || {};
+
+            return `
+              <div class="ad-slot">
+
+                <div class="ad-title">
+
+                  <label
+                    class="check-row"
+                  >
+
+                    <input
+                      id="ad_${key}_enabled"
+                      type="checkbox"
+                      ${
+                        item.enabled
+                          ? 'checked'
+                          : ''
+                      }
+                    >
+
+                    <strong>
+                      ${esc(
+                        label
+                      )}
+                    </strong>
+
+                  </label>
+
+                </div>
+
+
+                <textarea
+                  id="ad_${key}_code"
+                  class="field"
+                  rows="4"
+                  placeholder="Paste ad code here..."
+                >${esc(
+                  item.code ||
+                  ''
+                )}</textarea>
+
+
+                ${
+                  hasHeight
+                    ? `
+                      <input
+                        id="ad_${key}_height"
+                        class="field"
+                        type="number"
+                        min="0"
+                        placeholder="Height in px"
+                        value="${
+                          Number(
+                            item.height ||
+                            0
+                          )
+                        }"
+                      >
+                    `
+                    : ''
+                }
+
+              </div>
+            `;
+          }
+        )
+        .join('');
+
+}
+
+
+$('saveAdsBtn')
+  .addEventListener(
+    'click',
+    async () => {
+
+      const body = {};
+
+      for (
+        const [
+          key,
+          label,
+          hasHeight
+        ] of AD_SLOTS
+      ) {
+
+        body[key] = {
+
+          enabled:
+            $(
+              `ad_${key}_enabled`
+            )?.checked ||
+            false,
+
+          code:
+            $(
+              `ad_${key}_code`
+            )?.value ||
+            '',
+
+          height:
+            hasHeight
+              ? Number(
+                  $(
+                    `ad_${key}_height`
+                  )?.value ||
+                  0
+                )
+              : 0
+
+        };
+
+      }
+
+
+      const {
+        response,
+        data
+      } =
+        await jsonFetch(
+          '/api/admin/ads',
+          {
+            method:
+              'POST',
+
+            headers: {
+              'Content-Type':
+                'application/json'
+            },
+
+            body:
+              JSON.stringify(body)
+          }
+        );
+
+
+      if (
+        response.ok
+      ) {
+
+        showToast(
+          'Ads saved.'
+        );
+
+      } else {
+
+        showToast(
+          data.error ||
+          'Ads save failed.'
+        );
+
+      }
+
+    }
+  );
+
+
+/* =========================================================
+   MANUAL PUBLISH
+========================================================= */
+
+$('manualPublishBtn')
+  .addEventListener(
+    'click',
+    async () => {
+
+      const body = {
+
+        title:
+          $('manualTitle')
+            .value
+            .trim(),
+
+        prompt:
+          $('manualPrompt')
+            .value
+            .trim(),
+
+        model:
+          $('manualModel')
+            .value
+            .trim(),
+
+        category:
+          $('manualCategory')
+            .value
+            .trim(),
+
+        media:
+          $('manualMedia')
+            .value,
+
+        imageUrl:
+          $('manualImageUrl')
+            .value
+            .trim()
+
+      };
+
+
+      if (
+        !body.title ||
+        !body.prompt
+      ) {
+
+        showToast(
+          'Title and prompt required.'
+        );
+
+        return;
+      }
+
+
+      const {
+        response,
+        data
+      } =
+        await jsonFetch(
+          '/api/admin/prompts',
+          {
+            method:
+              'POST',
+
+            headers: {
+              'Content-Type':
+                'application/json'
+            },
+
+            body:
+              JSON.stringify(body)
+          }
+        );
+
+
+      if (
+        response.ok
+      ) {
+
+        showToast(
+          'Post published.'
+        );
+
+        $('manualTitle')
+          .value = '';
+
+        $('manualPrompt')
+          .value = '';
+
+        $('manualImageUrl')
+          .value = '';
+
+        await loadPosts();
+
+      } else {
+
+        showToast(
+          data.error ||
+          'Publish failed.'
+        );
+
+      }
+
+    }
+  );
+
+
+/* =========================================================
+   POSTS
+========================================================= */
+
+async function loadPosts() {
+
+  const {
+    response,
+    data
+  } =
+    await jsonFetch(
+      '/api/admin/prompts'
+    );
+
+  if (!response.ok) {
+    return;
+  }
+
+  const items =
+    Array.isArray(data)
+      ? data
+      : [];
+
+
+  if (!items.length) {
+
+    $('postsList')
+      .innerHTML =
+        `
+          <div class="api-help">
+            No published posts yet.
+          </div>
+        `;
+
+    return;
+  }
+
+
+  $('postsList')
+    .innerHTML =
+      items
+        .slice(0, 100)
+        .map(
+          p =>
+            `
+              <div class="post-item">
+
+                <div class="post-info">
+
+                  <div class="post-title">
+                    ${esc(
+                      p.title
+                    )}
+                  </div>
+
+                  <div
+                    class="provider-meta"
+                  >
+                    ${esc(
+                      p.category ||
+                      'Creative'
+                    )}
+
+                    ·
+
+                    ${esc(
+                      p.media ||
+                      'Image'
+                    )}
+
+                    ·
+
+                    ${esc(
+                      p.model ||
+                      'AI'
+                    )}
+
+                  </div>
+
+                </div>
+
+
+                <button
+                  class="btn btn-danger"
+                  onclick="deletePost('${
+                    esc(
+                      p.id
+                    )
+                  }')"
+                >
+                  Delete
+                </button>
+
+              </div>
+            `
+        )
+        .join('');
+
+}
+
+
+async function deletePost(
+  id
+) {
+
+  if (
+    !confirm(
+      'Delete this post?'
+    )
+  ) {
+    return;
+  }
+
+
+  const {
+    response,
+    data
+  } =
+    await jsonFetch(
+      `/api/admin/prompts/${encodeURIComponent(
+        id
+      )}`,
+      {
+        method:
+          'DELETE'
+      }
+    );
+
+
+  if (
+    response.ok
+  ) {
+
+    showToast(
+      'Post deleted.'
+    );
+
+    await loadPosts();
+
+  } else {
+
+    showToast(
+      data.error ||
+      'Delete failed.'
+    );
+
+  }
+
+}
+
+
+/* =========================================================
+   LOAD EVERYTHING
+========================================================= */
+
+async function loadAll() {
+
+  try {
+
+    await Promise.all([
+      loadProviders(),
+      loadSettings(),
+      loadAds(),
+      loadPosts()
+    ]);
+
+  } catch (error) {
+
+    console.error(
+      error
+    );
+
+    showToast(
+      error.message
+    );
+
+  }
+
+}
+
+
+/* =========================================================
+   REFRESH
+========================================================= */
+
+$('refreshPostsBtn')
+  .addEventListener(
+    'click',
+    loadPosts
+  );
+
+
+/* =========================================================
+   INIT
+========================================================= */
+
+updateProviderPresets();
+
+checkLogin();
+
 </script>
+
 </body>
 </html>
