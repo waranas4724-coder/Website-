@@ -1,17 +1,19 @@
 {
   "name": "promptforge",
-  "version": "2.0.0",
+  "version": "1.0.0",
   "private": true,
   "engines": {
     "node": "20.x"
   },
-  "description": "PromptForge - automatic trending topics, AI prompts, images and published prompt posts.",
+  "description": "PromptForge - automatic AI prompt and image publishing website.",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
     "dev": "node server.js"
   },
   "dependencies": {
+    "@supabase/supabase-js": "^2.57.4",
+    "cloudinary": "^2.7.0",
     "dotenv": "^16.4.5",
     "express": "^5.1.0",
     "express-session": "^1.18.2",
