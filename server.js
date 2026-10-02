@@ -1,9 +1,8 @@
 require("dotenv").config();
 
 const express = require("express");
-const fs = require("fs");
-const path = require("path");
 const crypto = require("crypto");
+const path = require("path");
 
 const db = require("./db");
 
@@ -13,44 +12,60 @@ const PORT = Number(process.env.PORT || 3000);
 const ROOT = __dirname;
 const PUBLIC_DIR = path.join(ROOT, "public");
 
-const DATA_DIR =
-  process.env.DATA_DIR ||
-  path.join(ROOT, "data");
+/*
+|--------------------------------------------------------------------------
+| Cloudinary
+|--------------------------------------------------------------------------
+*/
 
-const IMAGE_DIR =
-  process.env.IMAGE_DATA_DIR ||
-  path.join(DATA_DIR, "generated");
+let cloudinary = null;
 
-fs.mkdirSync(DATA_DIR, { recursive: true });
-fs.mkdirSync(IMAGE_DIR, { recursive: true });
+if (
+  process.env.CLOUDINARY_CLOUD_NAME &&
+  process.env.CLOUDINARY_API_KEY &&
+  process.env.CLOUDINARY_API_SECRET
+) {
+  const { v2 } = require("cloudinary");
+
+  v2.config({
+    cloud_name:
+      process.env.CLOUDINARY_CLOUD_NAME,
+    api_key:
+      process.env.CLOUDINARY_API_KEY,
+    api_secret:
+      process.env.CLOUDINARY_API_SECRET
+  });
+
+  cloudinary = v2;
+
+  console.log(
+    "Cloudinary storage enabled."
+  );
+} else {
+  console.warn(
+    "Cloudinary environment variables are missing."
+  );
+}
 
 app.set("trust proxy", 1);
 app.disable("x-powered-by");
 
-app.use(express.json({ limit: "2mb" }));
-app.use(express.urlencoded({ extended: true }));
-
-/*
-|--------------------------------------------------------------------------
-| Static files
-|--------------------------------------------------------------------------
-*/
-
-app.use(express.static(PUBLIC_DIR));
-
-/*
-|--------------------------------------------------------------------------
-| Generated AI images
-|--------------------------------------------------------------------------
-*/
-
 app.use(
-  "/generated",
-  express.static(IMAGE_DIR, {
-    maxAge: "7d",
-    fallthrough: false
+  express.json({
+    limit: "2mb"
   })
 );
+
+app.use(
+  express.urlencoded({
+    extended: true
+  })
+);
+
+app.use(
+  express.static(PUBLIC_DIR)
+);
+
 
 /*
 |--------------------------------------------------------------------------
@@ -58,7 +73,10 @@ app.use(
 |--------------------------------------------------------------------------
 */
 
-function safeString(value, max = 5000) {
+function safeString(
+  value,
+  max = 5000
+) {
   return String(value ?? "")
     .replace(/\u0000/g, "")
     .trim()
@@ -66,34 +84,33 @@ function safeString(value, max = 5000) {
 }
 
 function slugify(value) {
-  return safeString(value, 200)
+  return safeString(
+    value,
+    200
+  )
     .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "")
+    .replace(
+      /[^a-z0-9]+/g,
+      "-"
+    )
+    .replace(
+      /^-+|-+$/g,
+      ""
+    )
     .slice(0, 90);
 }
 
-function uniqueSlug(list, title) {
-  const base = slugify(title) || "prompt";
-  let slug = base;
-  let n = 2;
-
-  while (list.some((x) => x.slug === slug)) {
-    slug = `${base}-${n++}`;
-  }
-
-  return slug;
-}
-
 function isHttpUrl(value) {
-  return /^https?:\/\//i.test(String(value || ""));
+  return /^https?:\/\//i.test(
+    String(value || "")
+  );
 }
 
 function providerName(provider) {
   return safeString(
     provider?.providerName ||
-    provider?.name ||
-    "Provider",
+      provider?.name ||
+      "Provider",
     120
   );
 }
@@ -101,27 +118,31 @@ function providerName(provider) {
 function providerKey(provider) {
   return safeString(
     provider?.apiKey ||
-    provider?.api ||
-    provider?.key ||
-    "",
-    500
+      provider?.api ||
+      provider?.key ||
+      "",
+    1000
   );
 }
 
 function enabled(provider) {
-  return provider?.enabled !== false;
+  return (
+    provider?.enabled !== false
+  );
 }
 
 function normalizeCategory(value) {
   const v = String(value || "")
     .toLowerCase()
-    .replace(/[_-]+/g, " ")
+    .replace(
+      /[_-]+/g,
+      " "
+    )
     .trim();
 
   if (
     v.includes("prompt") ||
-    v.includes("text") ||
-    v.includes("generate prompt")
+    v.includes("text")
   ) {
     return "prompt_generate";
   }
@@ -145,33 +166,67 @@ function normalizeCategory(value) {
   return v;
 }
 
-function getProviders(category) {
-  const all = db.getApiProviders();
+async function getProviders(
+  category
+) {
+  const all =
+    await db.getApiProviders();
 
-  return all.filter((p) => {
-    return (
-      enabled(p) &&
-      normalizeCategory(p.category) === category &&
-      providerKey(p)
-    );
-  });
-}
-
-function isProvider(name, ...names) {
-  const n = String(name || "").toLowerCase();
-
-  return names.some((x) =>
-    n.includes(String(x).toLowerCase())
+  return all.filter(
+    (provider) =>
+      enabled(provider) &&
+      normalizeCategory(
+        provider.category
+      ) === category &&
+      providerKey(provider)
   );
 }
+
+function isProvider(
+  name,
+  ...names
+) {
+  const n =
+    String(name || "")
+      .toLowerCase();
+
+  return names.some(
+    (x) =>
+      n.includes(
+        String(x).toLowerCase()
+      )
+  );
+}
+
+function uniqueSlug(
+  list,
+  title
+) {
+  const base =
+    slugify(title) ||
+    "prompt";
+
+  let slug = base;
+  let n = 2;
+
+  const used = new Set(
+    list.map(
+      (x) => x.slug
+    )
+  );
+
+  while (used.has(slug)) {
+    slug =
+      `${base}-${n++}`;
+  }
+
+  return slug;
+}
+
 
 /*
 |--------------------------------------------------------------------------
 | Admin authentication
-|--------------------------------------------------------------------------
-|
-| No extra session package required.
-| Uses a signed random admin cookie.
 |--------------------------------------------------------------------------
 */
 
@@ -184,101 +239,173 @@ const ADMIN_PASSWORD =
   process.env.ADMIN_PASSWORD ||
   "admin123";
 
-const ADMIN_COOKIE = "pf_admin";
+const ADMIN_COOKIE =
+  "pf_admin";
 
 const ADMIN_SECRET =
   process.env.SESSION_SECRET ||
   process.env.ADMIN_SECRET ||
-  crypto.randomBytes(32).toString("hex");
+  crypto
+    .randomBytes(32)
+    .toString("hex");
 
-const adminTokens = new Set();
+const adminTokens =
+  new Set();
 
 function makeAdminToken() {
   const raw =
-    crypto.randomBytes(32).toString("hex");
+    crypto
+      .randomBytes(32)
+      .toString("hex");
 
-  const sig = crypto
-    .createHmac("sha256", ADMIN_SECRET)
-    .update(raw)
-    .digest("hex");
+  const sig =
+    crypto
+      .createHmac(
+        "sha256",
+        ADMIN_SECRET
+      )
+      .update(raw)
+      .digest("hex");
 
   return `${raw}.${sig}`;
 }
 
-function validAdminToken(token) {
-  if (!token) return false;
-
-  if (!adminTokens.has(token)) {
+function validAdminToken(
+  token
+) {
+  if (!token) {
     return false;
   }
 
-  const parts = token.split(".");
-
-  if (parts.length !== 2) {
+  if (
+    !adminTokens.has(token)
+  ) {
     return false;
   }
 
-  const expected = crypto
-    .createHmac("sha256", ADMIN_SECRET)
-    .update(parts[0])
-    .digest("hex");
+  const parts =
+    token.split(".");
 
-  return crypto.timingSafeEqual(
-    Buffer.from(parts[1]),
-    Buffer.from(expected)
-  );
+  if (
+    parts.length !== 2
+  ) {
+    return false;
+  }
+
+  const expected =
+    crypto
+      .createHmac(
+        "sha256",
+        ADMIN_SECRET
+      )
+      .update(parts[0])
+      .digest("hex");
+
+  try {
+    return crypto.timingSafeEqual(
+      Buffer.from(
+        parts[1]
+      ),
+      Buffer.from(
+        expected
+      )
+    );
+  } catch {
+    return false;
+  }
 }
 
-function getCookie(req, name) {
-  const header = req.headers.cookie || "";
+function getCookie(
+  req,
+  name
+) {
+  const header =
+    req.headers.cookie || "";
 
-  const parts = header
-    .split(";")
-    .map((x) => x.trim());
+  const parts =
+    header
+      .split(";")
+      .map(
+        (x) => x.trim()
+      );
 
-  for (const part of parts) {
-    const index = part.indexOf("=");
+  for (
+    const part of parts
+  ) {
+    const index =
+      part.indexOf("=");
 
-    if (index === -1) continue;
+    if (index === -1) {
+      continue;
+    }
 
-    const key = part.slice(0, index);
-    const value = part.slice(index + 1);
+    const key =
+      part.slice(
+        0,
+        index
+      );
+
+    const value =
+      part.slice(
+        index + 1
+      );
 
     if (key === name) {
-      return decodeURIComponent(value);
+      return decodeURIComponent(
+        value
+      );
     }
   }
 
   return "";
 }
 
-function setAdminCookie(res, token) {
+function setAdminCookie(
+  res,
+  token
+) {
   res.setHeader(
     "Set-Cookie",
     `${ADMIN_COOKIE}=${encodeURIComponent(
       token
-    )}; Path=/; HttpOnly; SameSite=Lax; Max-Age=28800`
+    )}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=28800`
   );
 }
 
-function clearAdminCookie(res) {
+function clearAdminCookie(
+  res
+) {
   res.setHeader(
     "Set-Cookie",
-    `${ADMIN_COOKIE}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0`
+    `${ADMIN_COOKIE}=; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=0`
   );
 }
 
-function requireAdmin(req, res, next) {
-  const token = getCookie(req, ADMIN_COOKIE);
+function requireAdmin(
+  req,
+  res,
+  next
+) {
+  const token =
+    getCookie(
+      req,
+      ADMIN_COOKIE
+    );
 
-  if (!validAdminToken(token)) {
-    return res.status(401).json({
-      error: "Unauthorized"
-    });
+  if (
+    !validAdminToken(token)
+  ) {
+    return res
+      .status(401)
+      .json({
+        error:
+          "Unauthorized"
+      });
   }
 
   next();
 }
+
 
 /*
 |--------------------------------------------------------------------------
@@ -286,89 +413,162 @@ function requireAdmin(req, res, next) {
 |--------------------------------------------------------------------------
 */
 
-function getAllPrompts() {
-  return db.getPrompts();
-}
+app.get(
+  "/api/prompts",
+  async (req, res) => {
+    try {
+      let list =
+        await db.getPrompts();
 
-function searchPrompts(query = {}) {
-  let list = getAllPrompts();
+      const search =
+        safeString(
+          req.query.q,
+          200
+        ).toLowerCase();
 
-  const search = safeString(query.q, 200).toLowerCase();
-  const media = safeString(query.media, 50).toLowerCase();
-  const category = safeString(
-    query.category,
-    100
-  ).toLowerCase();
+      const media =
+        safeString(
+          req.query.media,
+          50
+        ).toLowerCase();
 
-  if (search) {
-    list = list.filter((p) =>
-      [
-        p.title,
-        p.prompt,
-        p.category,
-        p.model,
-        p.source
-      ]
-        .join(" ")
-        .toLowerCase()
-        .includes(search)
-    );
+      const category =
+        safeString(
+          req.query.category,
+          100
+        ).toLowerCase();
+
+      if (search) {
+        list =
+          list.filter(
+            (p) =>
+              [
+                p.title,
+                p.prompt,
+                p.category,
+                p.model,
+                p.source
+              ]
+                .join(" ")
+                .toLowerCase()
+                .includes(
+                  search
+                )
+          );
+      }
+
+      if (
+        media &&
+        media !== "all"
+      ) {
+        list =
+          list.filter(
+            (p) =>
+              String(
+                p.media || ""
+              ).toLowerCase() ===
+              media
+          );
+      }
+
+      if (
+        category &&
+        category !== "all"
+      ) {
+        list =
+          list.filter(
+            (p) =>
+              String(
+                p.category || ""
+              ).toLowerCase() ===
+              category
+          );
+      }
+
+      res.json(list);
+    } catch (error) {
+      console.error(
+        "GET prompts:",
+        error
+      );
+
+      res.status(500).json({
+        error:
+          "Failed to load prompts"
+      });
+    }
   }
+);
 
-  if (media && media !== "all") {
-    list = list.filter(
-      (p) =>
-        String(p.media || "").toLowerCase() ===
-        media
-    );
+app.get(
+  "/api/prompts/:slug",
+  async (req, res) => {
+    try {
+      const list =
+        await db.getPrompts();
+
+      const item =
+        list.find(
+          (p) =>
+            p.slug ===
+            req.params.slug
+        );
+
+      if (!item) {
+        return res
+          .status(404)
+          .json({
+            error:
+              "Prompt not found"
+          });
+      }
+
+      res.json(item);
+    } catch (error) {
+      console.error(
+        "GET prompt:",
+        error
+      );
+
+      res.status(500).json({
+        error:
+          "Failed to load prompt"
+      });
+    }
   }
+);
 
-  if (category && category !== "all") {
-    list = list.filter(
-      (p) =>
-        String(p.category || "").toLowerCase() ===
-        category
-    );
+app.get(
+  "/api/categories",
+  async (req, res) => {
+    try {
+      const list =
+        await db.getPrompts();
+
+      const result = {};
+
+      for (
+        const item of list
+      ) {
+        const category =
+          item.category ||
+          "General";
+
+        result[category] =
+          (result[category] ||
+            0) + 1;
+      }
+
+      res.json(result);
+    } catch (error) {
+      res.status(500).json({
+        error:
+          "Failed to load categories"
+      });
+    }
   }
+);
 
-  return list.sort(
-    (a, b) =>
-      new Date(b.publishedAt || 0) -
-      new Date(a.publishedAt || 0)
-  );
-}
-
-app.get("/api/prompts", (req, res) => {
-  res.json(searchPrompts(req.query));
-});
-
-app.get("/api/prompts/:slug", (req, res) => {
-  const item = getAllPrompts().find(
-    (p) => p.slug === req.params.slug
-  );
-
-  if (!item) {
-    return res.status(404).json({
-      error: "Prompt not found"
-    });
-  }
-
-  res.json(item);
-});
-
-app.get("/api/categories", (req, res) => {
-  const result = {};
-
-  for (const item of getAllPrompts()) {
-    const category =
-      item.category || "General";
-
-    result[category] =
-      (result[category] || 0) + 1;
-  }
-
-  res.json(result);
-});
 
 /*
 |--------------------------------------------------------------------------
@@ -376,31 +576,64 @@ app.get("/api/categories", (req, res) => {
 |--------------------------------------------------------------------------
 */
 
-app.get("/api/public/settings", (req, res) => {
-  const settings = db.getSettings();
+app.get(
+  "/api/public/settings",
+  async (req, res) => {
+    try {
+      const settings =
+        await db.getSettings();
 
-  res.json({
-    copyGateSeconds: Number(
-      settings.copyGateSeconds || 10
-    ),
-    directLink:
-      settings.directLink || ""
-  });
-});
+      res.json({
+        copyGateSeconds:
+          Number(
+            settings.copyGateSeconds ||
+              10
+          ),
+
+        directLink:
+          settings.directLink ||
+          ""
+      });
+    } catch (error) {
+      res.status(500).json({
+        error:
+          "Failed to load settings"
+      });
+    }
+  }
+);
+
 
 /*
 |--------------------------------------------------------------------------
-| Ads
+| Public Ads
 |--------------------------------------------------------------------------
 */
 
-app.get("/api/ads", (req, res) => {
-  res.set("Cache-Control", "no-store");
+app.get(
+  "/api/ads",
+  async (req, res) => {
+    try {
+      res.set(
+        "Cache-Control",
+        "no-store"
+      );
 
-  const ads = db.getAds();
+      const ads =
+        await db.getAds();
 
-  res.json(ads || {});
-});
+      res.json(
+        ads || {}
+      );
+    } catch (error) {
+      res.status(500).json({
+        error:
+          "Failed to load ads"
+      });
+    }
+  }
+);
+
 
 /*
 |--------------------------------------------------------------------------
@@ -408,57 +641,96 @@ app.get("/api/ads", (req, res) => {
 |--------------------------------------------------------------------------
 */
 
-app.post("/api/login", (req, res) => {
-  const username = safeString(
-    req.body?.username,
-    120
-  );
+app.post(
+  "/api/login",
+  (req, res) => {
+    const username =
+      safeString(
+        req.body?.username,
+        120
+      );
 
-  const password = String(
-    req.body?.password || ""
-  );
+    const password =
+      String(
+        req.body?.password ||
+          ""
+      );
 
-  if (
-    username !== ADMIN_USERNAME ||
-    password !== ADMIN_PASSWORD
-  ) {
-    return res.status(401).json({
-      error: "Invalid credentials"
+    if (
+      username !==
+        ADMIN_USERNAME ||
+      password !==
+        ADMIN_PASSWORD
+    ) {
+      return res
+        .status(401)
+        .json({
+          error:
+            "Invalid credentials"
+        });
+    }
+
+    const token =
+      makeAdminToken();
+
+    adminTokens.add(
+      token
+    );
+
+    setAdminCookie(
+      res,
+      token
+    );
+
+    res.json({
+      ok: true
     });
   }
+);
 
-  const token = makeAdminToken();
+app.post(
+  "/api/logout",
+  (req, res) => {
+    const token =
+      getCookie(
+        req,
+        ADMIN_COOKIE
+      );
 
-  adminTokens.add(token);
+    if (token) {
+      adminTokens.delete(
+        token
+      );
+    }
 
-  setAdminCookie(res, token);
+    clearAdminCookie(
+      res
+    );
 
-  res.json({
-    ok: true
-  });
-});
-
-app.post("/api/logout", (req, res) => {
-  const token = getCookie(req, ADMIN_COOKIE);
-
-  if (token) {
-    adminTokens.delete(token);
+    res.json({
+      ok: true
+    });
   }
+);
 
-  clearAdminCookie(res);
+app.get(
+  "/api/admin/me",
+  (req, res) => {
+    const token =
+      getCookie(
+        req,
+        ADMIN_COOKIE
+      );
 
-  res.json({
-    ok: true
-  });
-});
+    res.json({
+      authenticated:
+        validAdminToken(
+          token
+        )
+    });
+  }
+);
 
-app.get("/api/admin/me", (req, res) => {
-  const token = getCookie(req, ADMIN_COOKIE);
-
-  res.json({
-    authenticated: validAdminToken(token)
-  });
-});
 
 /*
 |--------------------------------------------------------------------------
@@ -469,299 +741,419 @@ app.get("/api/admin/me", (req, res) => {
 app.get(
   "/api/admin/prompts",
   requireAdmin,
-  (req, res) => {
-    res.json(getAllPrompts());
+  async (req, res) => {
+    try {
+      res.json(
+        await db.getPrompts()
+      );
+    } catch (error) {
+      res.status(500).json({
+        error:
+          "Failed to load prompts"
+      });
+    }
   }
 );
 
 app.post(
   "/api/admin/prompts",
   requireAdmin,
-  (req, res) => {
-    const body = req.body || {};
+  async (req, res) => {
+    try {
+      const body =
+        req.body || {};
 
-    if (!body.title || !body.prompt) {
-      return res.status(400).json({
+      if (
+        !body.title ||
+        !body.prompt
+      ) {
+        return res
+          .status(400)
+          .json({
+            error:
+              "Title and prompt are required"
+          });
+      }
+
+      const list =
+        await db.getPrompts();
+
+      const item = {
+        id:
+          Date.now()
+            .toString(36) +
+          crypto
+            .randomBytes(4)
+            .toString("hex"),
+
+        slug:
+          uniqueSlug(
+            list,
+            body.title
+          ),
+
+        title:
+          safeString(
+            body.title,
+            160
+          ),
+
+        prompt:
+          safeString(
+            body.prompt,
+            12000
+          ),
+
+        media:
+          "Image",
+
+        model:
+          safeString(
+            body.model,
+            150
+          ) || "AI",
+
+        category:
+          safeString(
+            body.category,
+            150
+          ) || "AI Image",
+
+        imageUrl:
+          isHttpUrl(
+            body.imageUrl
+          )
+            ? body.imageUrl
+            : "",
+
+        source:
+          safeString(
+            body.source,
+            150
+          ) || "Original",
+
+        publishedAt:
+          new Date()
+            .toISOString(),
+
+        auto: false
+      };
+
+      const saved =
+        await db.addPrompt(
+          item
+        );
+
+      res.json(saved);
+    } catch (error) {
+      console.error(
+        "ADD PROMPT:",
+        error
+      );
+
+      res.status(500).json({
         error:
-          "Title and prompt are required"
+          error.message ||
+          "Failed to publish prompt"
       });
     }
-
-    const list = getAllPrompts();
-
-    const item = {
-      id:
-        Date.now().toString(36) +
-        crypto.randomBytes(4).toString("hex"),
-
-      slug: uniqueSlug(list, body.title),
-
-      title: safeString(
-        body.title,
-        160
-      ),
-
-      prompt: safeString(
-        body.prompt,
-        12000
-      ),
-
-      description: safeString(
-        body.description,
-        1000
-      ),
-
-      media: "Image",
-
-      model:
-        safeString(
-          body.model,
-          150
-        ) || "AI",
-
-      category:
-        safeString(
-          body.category,
-          150
-        ) || "AI Image",
-
-      imageUrl:
-        isHttpUrl(body.imageUrl)
-          ? body.imageUrl
-          : "",
-
-      source:
-        safeString(
-          body.source,
-          150
-        ) || "Original",
-
-      sourceUrl:
-        isHttpUrl(body.sourceUrl)
-          ? body.sourceUrl
-          : "",
-
-      license:
-        safeString(
-          body.license,
-          100
-        ) || "Original",
-
-      publishedAt:
-        new Date().toISOString(),
-
-      auto: false
-    };
-
-    db.addPrompt(item);
-
-    res.json(item);
   }
 );
 
 app.put(
   "/api/admin/prompts/:id",
   requireAdmin,
-  (req, res) => {
-    const updated = db.updatePrompt(
-      req.params.id,
-      req.body || {}
-    );
+  async (req, res) => {
+    try {
+      const updated =
+        await db.updatePrompt(
+          req.params.id,
+          req.body || {}
+        );
 
-    if (!updated) {
-      return res.status(404).json({
-        error: "Prompt not found"
+      if (!updated) {
+        return res
+          .status(404)
+          .json({
+            error:
+              "Prompt not found"
+          });
+      }
+
+      res.json(updated);
+    } catch (error) {
+      res.status(500).json({
+        error:
+          error.message ||
+          "Failed to update prompt"
       });
     }
-
-    res.json(updated);
   }
 );
 
 app.delete(
   "/api/admin/prompts/:id",
   requireAdmin,
-  (req, res) => {
-    db.deletePrompt(req.params.id);
+  async (req, res) => {
+    try {
+      await db.deletePrompt(
+        req.params.id
+      );
 
-    res.json({
-      ok: true
-    });
+      res.json({
+        ok: true
+      });
+    } catch (error) {
+      res.status(500).json({
+        error:
+          error.message ||
+          "Failed to delete prompt"
+      });
+    }
   }
 );
+
 
 /*
 |--------------------------------------------------------------------------
 | API Providers
 |--------------------------------------------------------------------------
-|
-| Three separate categories:
-|
-| 1. trending_search
-| 2. prompt_generate
-| 3. photo_generate
-|
 */
 
 app.get(
   "/api/admin/providers",
   requireAdmin,
-  (req, res) => {
-    const providers =
-      db.getApiProviders();
+  async (req, res) => {
+    try {
+      const providers =
+        await db.getApiProviders();
 
-    /*
-     * Never send the full API key back to browser.
-     */
-    res.json(
-      providers.map((p) => ({
-        id: p.id,
-        category: p.category,
-        providerName:
-          p.providerName,
-        enabled:
-          p.enabled !== false,
-        hasKey:
-          !!providerKey(p),
-        apiKey:
-          providerKey(p)
-            ? "••••••••••••"
-            : ""
-      }))
-    );
+      res.json(
+        providers.map(
+          (p) => ({
+            id: p.id,
+
+            category:
+              p.category,
+
+            providerName:
+              p.providerName,
+
+            enabled:
+              p.enabled !== false,
+
+            hasKey:
+              !!providerKey(p),
+
+            apiKey:
+              providerKey(p)
+                ? "••••••••••••"
+                : ""
+          })
+        )
+      );
+    } catch (error) {
+      res.status(500).json({
+        error:
+          "Failed to load API providers"
+      });
+    }
   }
 );
 
 app.post(
   "/api/admin/providers",
   requireAdmin,
-  (req, res) => {
-    const body = req.body || {};
+  async (req, res) => {
+    try {
+      const body =
+        req.body || {};
 
-    const category =
-      normalizeCategory(body.category);
+      const category =
+        normalizeCategory(
+          body.category
+        );
 
-    const allowed = [
-      "trending_search",
-      "prompt_generate",
-      "photo_generate"
-    ];
+      const allowed = [
+        "trending_search",
+        "prompt_generate",
+        "photo_generate"
+      ];
 
-    if (!allowed.includes(category)) {
-      return res.status(400).json({
+      if (
+        !allowed.includes(
+          category
+        )
+      ) {
+        return res
+          .status(400)
+          .json({
+            error:
+              "Invalid API category"
+          });
+      }
+
+      const apiKey =
+        providerKey(body);
+
+      const name =
+        providerName(body);
+
+      if (
+        !name ||
+        !apiKey
+      ) {
+        return res
+          .status(400)
+          .json({
+            error:
+              "Provider name and API key are required"
+          });
+      }
+
+      const item =
+        await db.addApiProvider({
+          category,
+
+          providerName:
+            name,
+
+          apiKey,
+
+          enabled: true
+        });
+
+      res.json({
+        id: item.id,
+
+        category:
+          item.category,
+
+        providerName:
+          item.providerName,
+
+        enabled: true,
+
+        hasKey: true
+      });
+    } catch (error) {
+      res.status(500).json({
         error:
-          "Invalid API category"
+          error.message ||
+          "Failed to add API provider"
       });
     }
-
-    const apiKey =
-      providerKey(body);
-
-    const name =
-      providerName(body);
-
-    if (!name || !apiKey) {
-      return res.status(400).json({
-        error:
-          "Provider name and API key are required"
-      });
-    }
-
-    const item =
-      db.addApiProvider({
-        category,
-        providerName: name,
-        apiKey,
-        enabled: true
-      });
-
-    res.json({
-      id: item.id,
-      category: item.category,
-      providerName:
-        item.providerName,
-      enabled: true,
-      hasKey: true
-    });
   }
 );
 
 app.put(
   "/api/admin/providers/:id",
   requireAdmin,
-  (req, res) => {
-    const body = req.body || {};
+  async (req, res) => {
+    try {
+      const body =
+        req.body || {};
 
-    const update = {};
+      const update = {};
 
-    if (body.category) {
-      update.category =
-        normalizeCategory(
-          body.category
+      if (
+        body.category
+      ) {
+        update.category =
+          normalizeCategory(
+            body.category
+          );
+      }
+
+      if (
+        body.providerName
+      ) {
+        update.providerName =
+          providerName(body);
+      }
+
+      if (
+        body.apiKey &&
+        !String(
+          body.apiKey
+        ).includes("••")
+      ) {
+        update.apiKey =
+          providerKey(body);
+      }
+
+      if (
+        typeof body.enabled ===
+        "boolean"
+      ) {
+        update.enabled =
+          body.enabled;
+      }
+
+      const result =
+        await db.updateApiProvider(
+          req.params.id,
+          update
         );
-    }
 
-    if (body.providerName) {
-      update.providerName =
-        providerName(body);
-    }
+      if (!result) {
+        return res
+          .status(404)
+          .json({
+            error:
+              "Provider not found"
+          });
+      }
 
-    if (
-      body.apiKey &&
-      !String(body.apiKey)
-        .includes("••")
-    ) {
-      update.apiKey =
-        providerKey(body);
-    }
+      res.json({
+        id: result.id,
 
-    if (
-      typeof body.enabled ===
-      "boolean"
-    ) {
-      update.enabled =
-        body.enabled;
-    }
+        category:
+          result.category,
 
-    const result =
-      db.updateApiProvider(
-        req.params.id,
-        update
-      );
+        providerName:
+          result.providerName,
 
-    if (!result) {
-      return res.status(404).json({
-        error: "Provider not found"
+        enabled:
+          result.enabled !== false,
+
+        hasKey:
+          !!providerKey(
+            result
+          )
+      });
+    } catch (error) {
+      res.status(500).json({
+        error:
+          error.message ||
+          "Failed to update provider"
       });
     }
-
-    res.json({
-      id: result.id,
-      category:
-        result.category,
-      providerName:
-        result.providerName,
-      enabled:
-        result.enabled !== false,
-      hasKey:
-        !!providerKey(result)
-    });
   }
 );
 
 app.delete(
   "/api/admin/providers/:id",
   requireAdmin,
-  (req, res) => {
-    db.deleteApiProvider(
-      req.params.id
-    );
+  async (req, res) => {
+    try {
+      await db.deleteApiProvider(
+        req.params.id
+      );
 
-    res.json({
-      ok: true
-    });
+      res.json({
+        ok: true
+      });
+    } catch (error) {
+      res.status(500).json({
+        error:
+          error.message ||
+          "Failed to delete provider"
+      });
+    }
   }
 );
+
 
 /*
 |--------------------------------------------------------------------------
@@ -772,152 +1164,182 @@ app.delete(
 app.get(
   "/api/admin/settings",
   requireAdmin,
-  (req, res) => {
-    res.json(
-      db.getSettings()
-    );
+  async (req, res) => {
+    try {
+      res.json(
+        await db.getSettings()
+      );
+    } catch (error) {
+      res.status(500).json({
+        error:
+          "Failed to load settings"
+      });
+    }
   }
 );
 
 app.put(
   "/api/admin/settings",
   requireAdmin,
-  (req, res) => {
-    const old =
-      db.getSettings();
+  async (req, res) => {
+    try {
+      const old =
+        await db.getSettings();
 
-    const body =
-      req.body || {};
+      const body =
+        req.body || {};
 
-    const next = {
-      ...old,
+      const next = {
+        ...old,
 
-      autoPost:
-        body.autoPost !== undefined
-          ? !!body.autoPost
-          : !!old.autoPost,
+        autoPost:
+          body.autoPost !==
+          undefined
+            ? !!body.autoPost
+            : !!old.autoPost,
 
-      postIntervalMinutes:
-        Math.min(
-          1440,
-          Math.max(
-            1,
-            Number(
-              body.postIntervalMinutes ??
-                old.postIntervalMinutes ??
-                60
+        postIntervalMinutes:
+          Math.min(
+            1440,
+            Math.max(
+              1,
+              Number(
+                body.postIntervalMinutes ??
+                  old.postIntervalMinutes ??
+                  60
+              )
             )
-          )
-        ),
+          ),
 
-      postsPerRun:
-        Math.min(
-          20,
-          Math.max(
-            1,
-            Number(
-              body.postsPerRun ??
-                old.postsPerRun ??
-                1
+        postsPerRun:
+          Math.min(
+            20,
+            Math.max(
+              1,
+              Number(
+                body.postsPerRun ??
+                  old.postsPerRun ??
+                  1
+              )
             )
-          )
-        ),
+          ),
 
-      copyGateSeconds:
-        Math.min(
-          120,
-          Math.max(
-            0,
-            Number(
-              body.copyGateSeconds ??
-                old.copyGateSeconds ??
-                10
+        copyGateSeconds:
+          Math.min(
+            120,
+            Math.max(
+              0,
+              Number(
+                body.copyGateSeconds ??
+                  old.copyGateSeconds ??
+                  10
+              )
             )
+          ),
+
+        directLink:
+          safeString(
+            body.directLink ??
+              old.directLink ??
+              "",
+            2000
           )
-        ),
+      };
 
-      directLink:
-        safeString(
-          body.directLink ??
-            old.directLink ??
-            "",
-          2000
-        )
-    };
+      await db.updateSettings(
+        next
+      );
 
-    db.updateSettings(next);
+      restartAutoPosting();
 
-    restartAutoPosting();
-
-    res.json(next);
+      res.json(next);
+    } catch (error) {
+      res.status(500).json({
+        error:
+          error.message ||
+          "Failed to update settings"
+      });
+    }
   }
 );
 
+
 /*
 |--------------------------------------------------------------------------
-| Ads settings
+| Ads
 |--------------------------------------------------------------------------
 */
 
 app.get(
   "/api/admin/ads",
   requireAdmin,
-  (req, res) => {
-    res.json(
-      db.getAds() || {}
-    );
+  async (req, res) => {
+    try {
+      res.json(
+        await db.getAds()
+      );
+    } catch (error) {
+      res.status(500).json({
+        error:
+          "Failed to load ads"
+      });
+    }
   }
 );
 
 app.put(
   "/api/admin/ads",
   requireAdmin,
-  (req, res) => {
-    db.updateAds(
-      req.body || {}
-    );
+  async (req, res) => {
+    try {
+      const result =
+        await db.updateAds(
+          req.body || {}
+        );
 
-    res.json(
-      db.getAds() || {}
-    );
+      res.json(result);
+    } catch (error) {
+      res.status(500).json({
+        error:
+          error.message ||
+          "Failed to update ads"
+      });
+    }
   }
 );
+
 
 /*
 |--------------------------------------------------------------------------
 | Trending Search
 |--------------------------------------------------------------------------
-|
-| Provider support:
-|
-| - NewsData.io
-| - GNews
-| - generic Google News RSS fallback
-|
-|--------------------------------------------------------------------------
 */
 
-async function fetchNewsData(provider) {
+async function fetchNewsData(
+  provider
+) {
   const key =
     providerKey(provider);
 
-  const url =
-    "https://newsdata.io/api/1/latest" +
-    `?apikey=${encodeURIComponent(
-      key
-    )}` +
-    "&language=en" +
-    "&size=10";
-
   const response =
-    await fetch(url, {
-      headers: {
-        Accept:
-          "application/json"
-      },
-      signal:
-        AbortSignal.timeout(20000)
-    });
+    await fetch(
+      "https://newsdata.io/api/1/latest" +
+        `?apikey=${encodeURIComponent(
+          key
+        )}` +
+        "&language=en&size=10",
+      {
+        headers: {
+          Accept:
+            "application/json"
+        },
+
+        signal:
+          AbortSignal.timeout(
+            20000
+          )
+      }
+    );
 
   if (!response.ok) {
     throw new Error(
@@ -949,36 +1371,43 @@ async function fetchNewsData(provider) {
           x.title,
           200
         ),
+
       source:
         safeString(
           x.source_id,
           100
         )
     }))
-    .filter((x) => x.title);
+    .filter(
+      (x) => x.title
+    );
 }
 
-async function fetchGNews(provider) {
+async function fetchGNews(
+  provider
+) {
   const key =
     providerKey(provider);
 
-  const url =
-    "https://gnews.io/api/v4/top-headlines" +
-    `?token=${encodeURIComponent(
-      key
-    )}` +
-    "&lang=en" +
-    "&max=10";
-
   const response =
-    await fetch(url, {
-      headers: {
-        Accept:
-          "application/json"
-      },
-      signal:
-        AbortSignal.timeout(20000)
-    });
+    await fetch(
+      "https://gnews.io/api/v4/top-headlines" +
+        `?token=${encodeURIComponent(
+          key
+        )}` +
+        "&lang=en&max=10",
+      {
+        headers: {
+          Accept:
+            "application/json"
+        },
+
+        signal:
+          AbortSignal.timeout(
+            20000
+          )
+      }
+    );
 
   if (!response.ok) {
     throw new Error(
@@ -1010,29 +1439,34 @@ async function fetchGNews(provider) {
           x.title,
           200
         ),
+
       source:
         safeString(
           x.source?.name,
           100
         )
     }))
-    .filter((x) => x.title);
+    .filter(
+      (x) => x.title
+    );
 }
 
 async function fetchGoogleNewsRSS() {
-  const url =
-    "https://news.google.com/rss" +
-    "?hl=en-US&gl=US&ceid=US:en";
-
   const response =
-    await fetch(url, {
-      headers: {
-        "User-Agent":
-          "PromptForge/2.0"
-      },
-      signal:
-        AbortSignal.timeout(20000)
-    });
+    await fetch(
+      "https://news.google.com/rss?hl=en-US&gl=US&ceid=US:en",
+      {
+        headers: {
+          "User-Agent":
+            "PromptForge/2.0"
+        },
+
+        signal:
+          AbortSignal.timeout(
+            20000
+          )
+      }
+    );
 
   if (!response.ok) {
     throw new Error(
@@ -1045,13 +1479,16 @@ async function fetchGoogleNewsRSS() {
 
   const results = [];
 
-  const matches = [
-    ...xml.matchAll(
-      /<item>([\s\S]*?)<\/item>/gi
-    )
-  ];
+  const matches =
+    [
+      ...xml.matchAll(
+        /<item>([\s\S]*?)<\/item>/gi
+      )
+    ];
 
-  for (const match of matches) {
+  for (
+    const match of matches
+  ) {
     const block =
       match[1];
 
@@ -1060,7 +1497,9 @@ async function fetchGoogleNewsRSS() {
         /<title>([\s\S]*?)<\/title>/i
       );
 
-    if (!title) continue;
+    if (!title) {
+      continue;
+    }
 
     const clean =
       title[1]
@@ -1088,16 +1527,15 @@ async function fetchGoogleNewsRSS() {
 
 async function getTrendingTopic() {
   const providers =
-    getProviders(
+    await getProviders(
       "trending_search"
     );
 
   const errors = [];
 
-  /*
-   * User-added APIs first.
-   */
-  for (const provider of providers) {
+  for (
+    const provider of providers
+  ) {
     try {
       const name =
         providerName(
@@ -1132,10 +1570,13 @@ async function getTrendingTopic() {
         );
       }
 
-      if (results.length) {
+      if (
+        results.length
+      ) {
         return {
           title:
             results[0].title,
+
           source:
             results[0].source ||
             name
@@ -1155,10 +1596,13 @@ async function getTrendingTopic() {
     const results =
       await fetchGoogleNewsRSS();
 
-    if (results.length) {
+    if (
+      results.length
+    ) {
       return {
         title:
           results[0].title,
+
         source:
           results[0].source
       };
@@ -1175,13 +1619,10 @@ async function getTrendingTopic() {
   );
 }
 
+
 /*
 |--------------------------------------------------------------------------
 | Prompt Generation
-|--------------------------------------------------------------------------
-|
-| Hugging Face currently provides an OpenAI-compatible chat endpoint for
-| text generation. We use fetch directly, so no extra npm package is needed.
 |--------------------------------------------------------------------------
 */
 
@@ -1216,52 +1657,59 @@ async function generatePromptWithHF(
 
           messages: [
             {
-              role: "system",
+              role:
+                "system",
+
               content:
                 "You are a professional AI image prompt writer. Return only one detailed English image-generation prompt. Do not add explanations, headings, markdown or quotation marks."
             },
 
             {
-              role: "user",
+              role:
+                "user",
+
               content:
                 `Create a premium, highly detailed AI image-generation prompt based on this trending topic:
 
 ${topic}
 
-The prompt should describe:
+Include:
 - main subject
 - composition
 - environment
-- lighting
+- cinematic lighting
 - realistic textures
-- cinematic photography
-- professional color grading
+- professional photography
 - atmospheric depth
 - sharp details
-- premium visual quality
+- premium color grading
 
 Return only the final prompt.`
             }
           ],
 
-          temperature: 0.9,
+          temperature:
+            0.9,
 
-          max_tokens: 900
+          max_tokens:
+            900
         }),
 
         signal:
-          AbortSignal.timeout(45000)
+          AbortSignal.timeout(
+            45000
+          )
       }
     );
 
   if (!response.ok) {
-    const errorText =
+    const text =
       await response.text();
 
     throw new Error(
       `${providerName(
         provider
-      )}: HTTP ${response.status} ${errorText.slice(
+      )}: HTTP ${response.status} ${text.slice(
         0,
         500
       )}`
@@ -1272,14 +1720,15 @@ Return only the final prompt.`
     await response.json();
 
   const content =
-    json?.choices?.[0]?.message
+    json?.choices?.[0]
+      ?.message
       ?.content;
 
   if (!content) {
     throw new Error(
       `${providerName(
         provider
-      )}: empty prompt response`
+      )}: empty response`
     );
   }
 
@@ -1293,7 +1742,7 @@ async function generatePrompt(
   topic
 ) {
   const providers =
-    getProviders(
+    await getProviders(
       "prompt_generate"
     );
 
@@ -1305,7 +1754,9 @@ async function generatePrompt(
 
   const errors = [];
 
-  for (const provider of providers) {
+  for (
+    const provider of providers
+  ) {
     try {
       const name =
         providerName(
@@ -1329,6 +1780,7 @@ async function generatePrompt(
         if (prompt) {
           return {
             prompt,
+
             provider:
               name
           };
@@ -1351,12 +1803,10 @@ async function generatePrompt(
   );
 }
 
+
 /*
 |--------------------------------------------------------------------------
 | Image Generation
-|--------------------------------------------------------------------------
-|
-| Hugging Face text-to-image endpoint returns image bytes on success.
 |--------------------------------------------------------------------------
 */
 
@@ -1375,41 +1825,47 @@ async function generateImageWithHF(
     `https://router.huggingface.co/hf-inference/models/${model}`;
 
   const response =
-    await fetch(endpoint, {
-      method: "POST",
+    await fetch(
+      endpoint,
+      {
+        method: "POST",
 
-      headers: {
-        Authorization:
-          `Bearer ${key}`,
+        headers: {
+          Authorization:
+            `Bearer ${key}`,
 
-        "Content-Type":
-          "application/json",
+          "Content-Type":
+            "application/json",
 
-        Accept:
-          "image/png"
-      },
+          Accept:
+            "image/png"
+        },
 
-      body: JSON.stringify({
-        inputs: prompt,
+        body: JSON.stringify({
+          inputs:
+            prompt,
 
-        parameters: {
-          width: 1024,
-          height: 1024
-        }
-      }),
+          parameters: {
+            width: 1024,
+            height: 1024
+          }
+        }),
 
-      signal:
-        AbortSignal.timeout(180000)
-    });
+        signal:
+          AbortSignal.timeout(
+            180000
+          )
+      }
+    );
 
   if (!response.ok) {
-    const errorText =
+    const text =
       await response.text();
 
     throw new Error(
       `${providerName(
         provider
-      )}: HTTP ${response.status} ${errorText.slice(
+      )}: HTTP ${response.status} ${text.slice(
         0,
         700
       )}`
@@ -1425,42 +1881,79 @@ async function generateImageWithHF(
     throw new Error(
       `${providerName(
         provider
-      )}: empty image response`
+      )}: empty image`
     );
   }
 
-  const filename =
-    `ai-${Date.now()}-${crypto
-      .randomBytes(5)
-      .toString("hex")}.png`;
-
-  const filepath =
-    path.join(
-      IMAGE_DIR,
-      filename
-    );
-
-  fs.writeFileSync(
-    filepath,
-    buffer
-  );
-
   return {
-    imageUrl:
-      `/generated/${filename}`,
+    buffer,
 
     provider:
-      providerName(provider),
+      providerName(
+        provider
+      ),
 
     model
   };
+}
+
+
+/*
+|--------------------------------------------------------------------------
+| Cloudinary Upload
+|--------------------------------------------------------------------------
+*/
+
+async function uploadToCloudinary(
+  buffer
+) {
+  if (!cloudinary) {
+    throw new Error(
+      "Cloudinary is not configured."
+    );
+  }
+
+  return new Promise(
+    (
+      resolve,
+      reject
+    ) => {
+      const upload =
+        cloudinary.uploader.upload_stream(
+          {
+            folder:
+              "promptforge",
+
+            resource_type:
+              "image"
+          },
+
+          (
+            error,
+            result
+          ) => {
+            if (error) {
+              return reject(
+                error
+              );
+            }
+
+            resolve(
+              result
+            );
+          }
+        );
+
+      upload.end(buffer);
+    }
+  );
 }
 
 async function generateImage(
   prompt
 ) {
   const providers =
-    getProviders(
+    await getProviders(
       "photo_generate"
     );
 
@@ -1472,12 +1965,16 @@ async function generateImage(
 
   const errors = [];
 
-  for (const provider of providers) {
+  for (
+    const provider of providers
+  ) {
     try {
       const name =
         providerName(
           provider
         );
+
+      let result;
 
       if (
         isProvider(
@@ -1487,22 +1984,63 @@ async function generateImage(
           "hf"
         )
       ) {
-        const result =
+        result =
           await generateImageWithHF(
             provider,
             prompt
           );
-
-        if (result?.imageUrl) {
-          return result;
-        }
       } else {
         throw new Error(
           `${name}: unsupported image provider`
         );
       }
+
+      if (
+        !result?.buffer
+      ) {
+        throw new Error(
+          `${name}: image buffer missing`
+        );
+      }
+
+      /*
+       * Image goes to Cloudinary.
+       */
+      const uploaded =
+        await uploadToCloudinary(
+          result.buffer
+        );
+
+      if (
+        !uploaded?.secure_url
+      ) {
+        throw new Error(
+          `${name}: Cloudinary upload failed`
+        );
+      }
+
+      return {
+        imageUrl:
+          uploaded.secure_url,
+
+        provider:
+          result.provider,
+
+        model:
+          result.model,
+
+        cloudinaryPublicId:
+          uploaded.public_id
+      };
     } catch (error) {
       errors.push(
+        error.message
+      );
+
+      console.error(
+        `Image provider failed: ${providerName(
+          provider
+        )}`,
         error.message
       );
     }
@@ -1514,53 +2052,55 @@ async function generateImage(
   );
 }
 
+
 /*
 |--------------------------------------------------------------------------
 | Duplicate protection
 |--------------------------------------------------------------------------
 */
 
-function promptExists(prompt) {
-  const normalized =
-    safeString(
-      prompt,
-      12000
-    )
-      .toLowerCase()
-      .replace(/\s+/g, " ");
+function normalizePrompt(
+  prompt
+) {
+  return safeString(
+    prompt,
+    12000
+  )
+    .toLowerCase()
+    .replace(
+      /\s+/g,
+      " "
+    );
+}
 
-  return getAllPrompts().some(
+async function promptExists(
+  prompt
+) {
+  const normalized =
+    normalizePrompt(
+      prompt
+    );
+
+  const list =
+    await db.getPrompts();
+
+  return list.some(
     (item) =>
-      safeString(
-        item.prompt,
-        12000
-      )
-        .toLowerCase()
-        .replace(/\s+/g, " ") ===
-      normalized
+      normalizePrompt(
+        item.prompt
+      ) === normalized
   );
 }
+
 
 /*
 |--------------------------------------------------------------------------
 | Automatic Post
 |--------------------------------------------------------------------------
-|
-| EXACT flow:
-|
-| Trending API
-|      ↓
-| Prompt API
-|      ↓
-| Image API
-|      ↓
-| Prompt + Image together
-|      ↓
-| Published post
-|--------------------------------------------------------------------------
 */
 
-let autoRunning = false;
+let autoRunning =
+  false;
 
 async function createAutomaticPost() {
   if (autoRunning) {
@@ -1572,6 +2112,9 @@ async function createAutomaticPost() {
   autoRunning = true;
 
   try {
+    /*
+     * 1. Trending
+     */
     const trend =
       await getTrendingTopic();
 
@@ -1581,6 +2124,9 @@ async function createAutomaticPost() {
       );
     }
 
+    /*
+     * 2. Prompt
+     */
     const generated =
       await generatePrompt(
         trend.title
@@ -1599,38 +2145,42 @@ async function createAutomaticPost() {
     }
 
     /*
-     * If exact prompt already exists,
-     * don't publish duplicate.
+     * 3. Duplicate check
      */
     if (
-      promptExists(
+      await promptExists(
         exactPrompt
       )
     ) {
       throw new Error(
-        "Duplicate prompt detected. Skipping this post."
+        "Duplicate prompt detected. Post skipped."
       );
     }
 
     /*
-     * IMPORTANT:
-     * The exact same prompt goes to
-     * the image generator.
+     * 4. Image
+     *
+     * EXACT same prompt is sent
+     * to the image generator.
      */
     const image =
       await generateImage(
         exactPrompt
       );
 
+    /*
+     * 5. Publish
+     */
     const list =
-      getAllPrompts();
+      await db.getPrompts();
 
     const title =
       trend.title;
 
     const item = {
       id:
-        Date.now().toString(36) +
+        Date.now()
+          .toString(36) +
         crypto
           .randomBytes(5)
           .toString("hex"),
@@ -1647,17 +2197,14 @@ async function createAutomaticPost() {
           160
         ),
 
-      description:
-        "AI-generated image prompt based on a trending topic.",
-
-      /*
-       * EXACT prompt used to generate image.
-       */
       prompt:
         exactPrompt,
 
       media:
         "Image",
+
+      imageUrl:
+        image.imageUrl,
 
       model:
         image.model ||
@@ -1666,51 +2213,54 @@ async function createAutomaticPost() {
       category:
         "Trending AI Image",
 
-      imageUrl:
-        image.imageUrl,
-
       source:
         image.provider ||
         generated.provider ||
         trend.source ||
         "AI",
 
-      sourceUrl:
-        "",
-
-      license:
-        "AI Generated",
-
       publishedAt:
-        new Date().toISOString(),
+        new Date()
+          .toISOString(),
 
-      auto:
-        true,
+      auto: true,
 
       trendSource:
-        trend.source || "",
+        trend.source ||
+        "",
 
       promptProvider:
-        generated.provider || "",
+        generated.provider ||
+        "",
 
       imageProvider:
-        image.provider || ""
+        image.provider ||
+        "",
+
+      cloudinaryPublicId:
+        image.cloudinaryPublicId ||
+        ""
     };
 
-    db.addPrompt(item);
+    const saved =
+      await db.addPrompt(
+        item
+      );
 
     return {
       ok: true,
-      post: item
+      post: saved
     };
   } finally {
-    autoRunning = false;
+    autoRunning =
+      false;
   }
 }
 
+
 /*
 |--------------------------------------------------------------------------
-| Manual Run Now
+| Manual Run
 |--------------------------------------------------------------------------
 */
 
@@ -1738,13 +2288,15 @@ app.post(
   }
 );
 
+
 /*
 |--------------------------------------------------------------------------
-| Automatic scheduler
+| Automatic Scheduler
 |--------------------------------------------------------------------------
 */
 
-let scheduler = null;
+let scheduler =
+  null;
 
 function restartAutoPosting() {
   if (scheduler) {
@@ -1752,100 +2304,118 @@ function restartAutoPosting() {
       scheduler
     );
 
-    scheduler = null;
+    scheduler =
+      null;
   }
 
-  const settings =
-    db.getSettings();
-
-  if (
-    settings.autoPost === false
-  ) {
-    console.log(
-      "Automatic posting disabled."
-    );
-
-    return;
-  }
-
-  const minutes =
-    Math.min(
-      1440,
-      Math.max(
-        1,
-        Number(
-          settings.postIntervalMinutes ||
-            60
-        )
-      )
-    );
-
-  const intervalMs =
-    minutes * 60 * 1000;
-
-  console.log(
-    `Automatic posting scheduled every ${minutes} minute(s).`
-  );
-
-  /*
-   * Do NOT immediately post when server restarts.
-   * Wait for the selected interval.
-   */
-  scheduler =
-    setInterval(
-      async () => {
-        try {
-          const current =
-            db.getSettings();
-
-          if (
-            current.autoPost === false
-          ) {
-            return;
-          }
-
-          const count =
-            Math.min(
-              20,
-              Math.max(
-                1,
-                Number(
-                  current.postsPerRun ||
-                    1
-                )
-              )
-            );
-
-          for (
-            let i = 0;
-            i < count;
-            i++
-          ) {
-            try {
-              const result =
-                await createAutomaticPost();
-
-              console.log(
-                "Automatic post created:",
-                result.post?.slug
-              );
-            } catch (error) {
-              console.error(
-                `Automatic post ${i + 1} failed:`,
-                error.message
-              );
-            }
-          }
-        } catch (error) {
-          console.error(
-            "Scheduler error:",
-            error
+  db.getSettings()
+    .then(
+      (settings) => {
+        if (
+          settings.autoPost ===
+          false
+        ) {
+          console.log(
+            "Automatic posting disabled."
           );
+
+          return;
         }
-      },
-      intervalMs
+
+        const minutes =
+          Math.min(
+            1440,
+            Math.max(
+              1,
+              Number(
+                settings.postIntervalMinutes ||
+                  60
+              )
+            )
+          );
+
+        const intervalMs =
+          minutes *
+          60 *
+          1000;
+
+        console.log(
+          `Automatic posting scheduled every ${minutes} minute(s).`
+        );
+
+        scheduler =
+          setInterval(
+            async () => {
+              try {
+                const current =
+                  await db.getSettings();
+
+                if (
+                  current.autoPost ===
+                  false
+                ) {
+                  return;
+                }
+
+                const count =
+                  Math.min(
+                    20,
+                    Math.max(
+                      1,
+                      Number(
+                        current.postsPerRun ||
+                          1
+                      )
+                    )
+                  );
+
+                for (
+                  let i = 0;
+                  i < count;
+                  i++
+                ) {
+                  try {
+                    const result =
+                      await createAutomaticPost();
+
+                    console.log(
+                      "Automatic post created:",
+                      result.post?.slug
+                    );
+                  } catch (
+                    error
+                  ) {
+                    console.error(
+                      `Automatic post ${
+                        i + 1
+                      } failed:`,
+                      error.message
+                    );
+                  }
+                }
+              } catch (
+                error
+              ) {
+                console.error(
+                  "Scheduler error:",
+                  error
+                );
+              }
+            },
+            intervalMs
+          );
+      }
+    )
+    .catch(
+      (error) => {
+        console.error(
+          "Scheduler setup failed:",
+          error
+        );
+      }
     );
 }
+
 
 /*
 |--------------------------------------------------------------------------
@@ -1858,13 +2428,23 @@ app.get(
   (req, res) => {
     res.json({
       ok: true,
+
       service:
         "PromptForge",
+
+      database:
+        "Supabase PostgreSQL",
+
+      cloudinary:
+        !!cloudinary,
+
       time:
-        new Date().toISOString()
+        new Date()
+          .toISOString()
     });
   }
 );
+
 
 /*
 |--------------------------------------------------------------------------
@@ -1884,9 +2464,10 @@ app.get(
   }
 );
 
+
 /*
 |--------------------------------------------------------------------------
-| Prompt detail page
+| Prompt detail
 |--------------------------------------------------------------------------
 */
 
@@ -1902,6 +2483,7 @@ app.get(
   }
 );
 
+
 /*
 |--------------------------------------------------------------------------
 | API 404
@@ -1911,11 +2493,15 @@ app.get(
 app.use(
   "/api",
   (req, res) => {
-    res.status(404).json({
-      error: "API route not found"
-    });
+    res
+      .status(404)
+      .json({
+        error:
+          "API route not found"
+      });
   }
 );
+
 
 /*
 |--------------------------------------------------------------------------
@@ -1924,7 +2510,7 @@ app.use(
 */
 
 app.get(
-  /^(?!\/generated\/).*$/,
+  /^(?!\/api\/).*/,
   (req, res) => {
     res.sendFile(
       path.join(
@@ -1934,6 +2520,7 @@ app.get(
     );
   }
 );
+
 
 /*
 |--------------------------------------------------------------------------
@@ -1964,6 +2551,18 @@ app.listen(
 
     console.log(
       "3. Image / Photo Generate"
+    );
+
+    console.log(
+      `Database: Supabase PostgreSQL`
+    );
+
+    console.log(
+      `Cloudinary: ${
+        cloudinary
+          ? "enabled"
+          : "disabled"
+      }`
     );
   }
 );
