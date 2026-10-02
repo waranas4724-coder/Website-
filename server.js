@@ -2,9 +2,8 @@ require("dotenv").config();
 
 const express = require("express");
 const session = require("express-session");
-const path = require("path");
 const crypto = require("crypto");
-const cloudinary = require("cloudinary").v2;
+const path = require("path");
 
 const {
   getPrompts,
@@ -25,16 +24,59 @@ const {
   saveAds
 } = require("./db");
 
+const cloudinary = require("cloudinary").v2;
+
 const app = express();
 
-const PORT = process.env.PORT || 3000;
+const PORT =
+  process.env.PORT || 3000;
+
 
 /* =========================================================
-   BASIC CONFIG
+   CLOUDINARY
 ========================================================= */
 
-app.set("trust proxy", 1);
-app.disable("x-powered-by");
+const CLOUDINARY_ENABLED =
+  !!(
+    process.env.CLOUDINARY_CLOUD_NAME &&
+    process.env.CLOUDINARY_API_KEY &&
+    process.env.CLOUDINARY_API_SECRET
+  );
+
+if (CLOUDINARY_ENABLED) {
+  cloudinary.config({
+    cloud_name:
+      process.env.CLOUDINARY_CLOUD_NAME,
+
+    api_key:
+      process.env.CLOUDINARY_API_KEY,
+
+    api_secret:
+      process.env.CLOUDINARY_API_SECRET
+  });
+
+  console.log(
+    "Cloudinary storage enabled."
+  );
+} else {
+  console.warn(
+    "Cloudinary storage disabled: missing environment variables."
+  );
+}
+
+
+/* =========================================================
+   EXPRESS
+========================================================= */
+
+app.set(
+  "trust proxy",
+  1
+);
+
+app.disable(
+  "x-powered-by"
+);
 
 app.use(
   express.json({
@@ -44,32 +86,37 @@ app.use(
 
 app.use(
   express.urlencoded({
-    extended: true,
-    limit: "2mb"
+    extended: true
   })
 );
 
 app.use(
   express.static(
-    path.join(__dirname, "public")
+    path.join(
+      __dirname,
+      "public"
+    )
   )
 );
+
 
 /* =========================================================
    SESSION
 ========================================================= */
 
+const SESSION_SECRET =
+  process.env.SESSION_SECRET ||
+  crypto.randomBytes(32).toString("hex");
+
 if (!process.env.SESSION_SECRET) {
   console.warn(
-    "[AUTH] SESSION_SECRET is not set."
+    "WARNING: SESSION_SECRET is not set."
   );
 }
 
 app.use(
   session({
-    secret:
-      process.env.SESSION_SECRET ||
-      crypto.randomBytes(32).toString("hex"),
+    secret: SESSION_SECRET,
 
     resave: false,
 
@@ -79,48 +126,21 @@ app.use(
       httpOnly: true,
       sameSite: "lax",
       secure: "auto",
-      maxAge: 8 * 60 * 60 * 1000
+      maxAge:
+        8 * 60 * 60 * 1000
     }
   })
 );
 
-/* =========================================================
-   CLOUDINARY
-========================================================= */
-
-const cloudinaryEnabled =
-  !!process.env.CLOUDINARY_CLOUD_NAME &&
-  !!process.env.CLOUDINARY_API_KEY &&
-  !!process.env.CLOUDINARY_API_SECRET;
-
-if (cloudinaryEnabled) {
-  cloudinary.config({
-    cloud_name:
-      process.env.CLOUDINARY_CLOUD_NAME,
-
-    api_key:
-      process.env.CLOUDINARY_API_KEY,
-
-    api_secret:
-      process.env.CLOUDINARY_API_SECRET,
-
-    secure: true
-  });
-
-  console.log(
-    "[BOOT] Cloudinary storage enabled."
-  );
-} else {
-  console.warn(
-    "[BOOT] Cloudinary environment variables are missing."
-  );
-}
 
 /* =========================================================
    HELPERS
 ========================================================= */
 
-function clean(value, fallback = "") {
+function clean(
+  value,
+  fallback = ""
+) {
   if (
     value === undefined ||
     value === null
@@ -131,354 +151,128 @@ function clean(value, fallback = "") {
   return String(value).trim();
 }
 
-function safeNumber(value, fallback = 0) {
-  const n = Number(value);
-
-  return Number.isFinite(n)
-    ? n
-    : fallback;
-}
 
 function slugify(value) {
   return String(value || "")
     .toLowerCase()
     .trim()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "")
+    .replace(
+      /[^a-z0-9]+/g,
+      "-"
+    )
+    .replace(
+      /^-+|-+$/g,
+      ""
+    )
     .slice(0, 90);
 }
 
-function httpUrl(value) {
-  const v = clean(value);
 
-  return /^https?:\/\//i.test(v)
-    ? v
-    : "";
+function uniqueTitle(
+  title,
+  existing
+) {
+  const base =
+    clean(title) ||
+    "AI Visual";
+
+  const same =
+    existing.filter(
+      x =>
+        String(x.title || "")
+          .toLowerCase() ===
+        base.toLowerCase()
+    ).length;
+
+  return same
+    ? `${base} ${same + 1}`
+    : base;
 }
 
-function uniqueTitle(title) {
-  return clean(title).slice(0, 180);
-}
 
-function providerNameMatches(provider, names) {
-  const name = clean(
-    provider?.providerName
-  ).toLowerCase();
+function providerNameMatches(
+  provider,
+  ...names
+) {
+  const current =
+    clean(
+      provider.providerName ||
+      provider.provider_name
+    ).toLowerCase();
 
   return names.some(
-    x =>
-      name === x.toLowerCase() ||
-      name.includes(x.toLowerCase())
+    name =>
+      current ===
+      String(name)
+        .toLowerCase()
   );
 }
 
-function providersFor(
-  providers,
-  category
-) {
-  return providers
-    .filter(
-      p =>
-        p.enabled !== false &&
-        clean(p.category).toLowerCase() ===
-          category.toLowerCase()
-    );
-}
 
-/* =========================================================
-   API ROTATION
-========================================================= */
-
-/*
-  Every category has its own pointer.
-
-  Example:
-
-  Trending:
-  API 1 -> API 2 -> API 3 -> API 1
-
-  Prompt:
-  API 1 -> API 2 -> API 1
-
-  Photo:
-  API 1 -> API 2 -> API 3 -> API 1
-
-  If an API fails, the next enabled API
-  is tried automatically.
-*/
-
-const rotationState = {
-  trending_search: 0,
-  prompt_generate: 0,
-  photo_generate: 0
-};
-
-function nextIndex(category, total) {
-  if (!total) {
-    return 0;
-  }
-
-  const current =
-    rotationState[category] || 0;
-
-  return current % total;
-}
-
-function advanceRotation(
-  category,
-  total
-) {
-  if (!total) {
-    rotationState[category] = 0;
-    return;
-  }
-
-  const current =
-    rotationState[category] || 0;
-
-  rotationState[category] =
-    (current + 1) % total;
-}
-
-function orderedProviders(
-  providers,
-  category
-) {
-  const list = providersFor(
-    providers,
-    category
-  );
-
-  if (!list.length) {
-    return [];
-  }
-
-  const start = nextIndex(
-    category,
-    list.length
-  );
-
-  return [
-    ...list.slice(start),
-    ...list.slice(0, start)
-  ];
-}
-
-/* =========================================================
-   HTTP
-========================================================= */
-
-async function fetchText(
-  url,
-  options = {},
-  timeout = 30000
-) {
-  const controller =
-    new AbortController();
-
-  const timer = setTimeout(
-    () => controller.abort(),
-    timeout
-  );
-
-  try {
-    const response = await fetch(
-      url,
-      {
-        ...options,
-        signal:
-          options.signal ||
-          controller.signal
-      }
-    );
-
-    const text =
-      await response.text();
-
-    if (!response.ok) {
-      throw new Error(
-        `HTTP ${response.status}: ${text.slice(
-          0,
-          500
-        )}`
-      );
-    }
-
-    return {
-      response,
-      text
-    };
-  } finally {
-    clearTimeout(timer);
-  }
-}
-
-async function fetchJson(
-  url,
-  options = {},
-  timeout = 30000
-) {
-  const result =
-    await fetchText(
-      url,
-      options,
-      timeout
-    );
-
-  let json;
-
-  try {
-    json = JSON.parse(
-      result.text
-    );
-  } catch {
-    throw new Error(
-      `Invalid JSON response from ${url}`
-    );
-  }
-
-  return {
-    response: result.response,
-    json
-  };
-}
-
-async function fetchBinary(
-  url,
-  options = {},
-  timeout = 60000
-) {
-  const controller =
-    new AbortController();
-
-  const timer = setTimeout(
-    () => controller.abort(),
-    timeout
-  );
-
-  try {
-    const response = await fetch(
-      url,
-      {
-        ...options,
-        signal:
-          options.signal ||
-          controller.signal
-      }
-    );
-
-    if (!response.ok) {
-      const text =
-        await response.text();
-
-      throw new Error(
-        `HTTP ${response.status}: ${text.slice(
-          0,
-          500
-        )}`
-      );
-    }
-
-    const buffer = Buffer.from(
-      await response.arrayBuffer()
-    );
-
-    return {
-      response,
-      buffer
-    };
-  } finally {
-    clearTimeout(timer);
-  }
-}
-
-/* =========================================================
-   RESPONSE PATH
-========================================================= */
-
-function getPath(
+function getPathValue(
   object,
   pathString
 ) {
-  if (!pathString) {
+  if (
+    !pathString
+  ) {
     return object;
   }
 
-  const parts =
-    String(pathString)
-      .replace(/\[(\d+)\]/g, ".$1")
-      .split(".")
-      .filter(Boolean);
+  return String(pathString)
+    .split(".")
+    .filter(Boolean)
+    .reduce(
+      (value, key) => {
 
-  let value = object;
+        if (
+          value === null ||
+          value === undefined
+        ) {
+          return undefined;
+        }
 
-  for (const part of parts) {
-    if (
-      value === undefined ||
-      value === null
-    ) {
-      return undefined;
-    }
+        if (
+          Array.isArray(value) &&
+          /^\d+$/.test(key)
+        ) {
+          return value[
+            Number(key)
+          ];
+        }
 
-    value = value[part];
-  }
+        return value[key];
 
-  return value;
-}
-
-function firstValue(
-  object,
-  paths
-) {
-  for (const p of paths) {
-    const value = getPath(
-      object,
-      p
+      },
+      object
     );
-
-    if (
-      value !== undefined &&
-      value !== null &&
-      value !== ""
-    ) {
-      return value;
-    }
-  }
-
-  return undefined;
 }
 
-/* =========================================================
-   TEMPLATE ENGINE FOR CUSTOM API
-========================================================= */
 
-function templateValue(
+function replaceTemplate(
   value,
-  context
+  vars = {}
 ) {
   if (
-    typeof value === "string"
+    typeof value ===
+    "string"
   ) {
     return value
       .replace(
-        /\{\{\s*apiKey\s*\}\}/gi,
-        clean(context.apiKey)
-      )
-      .replace(
         /\{\{\s*prompt\s*\}\}/gi,
-        clean(context.prompt)
+        vars.prompt || ""
       )
       .replace(
         /\{\{\s*topic\s*\}\}/gi,
-        clean(context.topic)
+        vars.topic || ""
+      )
+      .replace(
+        /\{\{\s*query\s*\}\}/gi,
+        vars.query || ""
       )
       .replace(
         /\{\{\s*title\s*\}\}/gi,
-        clean(context.title)
-      )
-      .replace(
-        /\{\{\s*category\s*\}\}/gi,
-        clean(context.category)
+        vars.title || ""
       );
   }
 
@@ -486,28 +280,31 @@ function templateValue(
     Array.isArray(value)
   ) {
     return value.map(
-      x =>
-        templateValue(
-          x,
-          context
+      item =>
+        replaceTemplate(
+          item,
+          vars
         )
     );
   }
 
   if (
     value &&
-    typeof value === "object"
+    typeof value ===
+      "object"
   ) {
     const result = {};
 
-    for (const [
-      key,
-      val
-    ] of Object.entries(value)) {
+    for (
+      const [
+        key,
+        item
+      ] of Object.entries(value)
+    ) {
       result[key] =
-        templateValue(
-          val,
-          context
+        replaceTemplate(
+          item,
+          vars
         );
     }
 
@@ -517,2552 +314,179 @@ function templateValue(
   return value;
 }
 
-function parseJsonConfig(
-  value,
-  fallback
+
+function appendQuery(
+  url,
+  query
 ) {
-  if (
-    value &&
-    typeof value === "object"
-  ) {
-    return value;
-  }
+  const u =
+    new URL(url);
 
-  if (!value) {
-    return fallback;
-  }
-
-  try {
-    return JSON.parse(value);
-  } catch {
-    return fallback;
-  }
-}
-
-/* =========================================================
-   CUSTOM API REQUEST
-========================================================= */
-
-async function callCustomAPI(
-  provider,
-  context = {}
-) {
-  const config =
-    provider.config || {};
-
-  const endpoint =
-    clean(
-      config.endpoint ||
-        config.url
-    );
-
-  if (!endpoint) {
-    throw new Error(
-      `${provider.providerName}: Custom API endpoint is missing`
-    );
-  }
-
-  const method =
-    clean(
-      config.method,
-      "GET"
-    ).toUpperCase();
-
-  const headers = {
-    Accept:
-      "application/json",
-    ...(parseJsonConfig(
-      config.headers,
-      {}
-    ) || {})
-  };
-
-  const authType =
-    clean(
-      config.authType ||
-        config.authentication ||
-        "none"
-    ).toLowerCase();
-
-  const apiKey =
-    clean(
-      provider.apiKey
-    );
-
-  if (
-    apiKey &&
-    (
-      authType === "bearer" ||
-      authType === "bearer_token"
-    )
-  ) {
-    headers.Authorization =
-      `Bearer ${apiKey}`;
-  }
-
-  if (
-    apiKey &&
-    (
-      authType === "x-api-key" ||
-      authType === "api-key" ||
-      authType === "apikey"
-    )
-  ) {
-    headers["X-API-Key"] =
-      apiKey;
-  }
-
-  const finalHeaders =
-    templateValue(
-      headers,
-      {
-        ...context,
-        apiKey
-      }
-    );
-
-  let finalUrl =
-    templateValue(
-      endpoint,
-      {
-        ...context,
-        apiKey
-      }
-    );
-
-  const bodyConfig =
-    config.body || {};
-
-  let body;
-
-  if (
-    method !== "GET" &&
-    method !== "HEAD"
-  ) {
-    const finalBody =
-      templateValue(
-        bodyConfig,
-        {
-          ...context,
-          apiKey
-        }
-      );
-
-    if (
-      typeof finalBody ===
-      "string"
-    ) {
-      body = finalBody;
-
-      if (
-        !finalHeaders[
-          "Content-Type"
-        ]
-      ) {
-        finalHeaders[
-          "Content-Type"
-        ] =
-          "application/json";
-      }
-    } else {
-      body =
-        JSON.stringify(
-          finalBody
-        );
-
-      if (
-        !finalHeaders[
-          "Content-Type"
-        ]
-      ) {
-        finalHeaders[
-          "Content-Type"
-        ] =
-          "application/json";
-      }
-    }
-  }
-
-  /*
-    Optional GET query parameters
-  */
-
-  if (
-    method === "GET" &&
-    config.query
-  ) {
-    const query =
-      templateValue(
-        config.query,
-        {
-          ...context,
-          apiKey
-        }
-      );
-
-    const url =
-      new URL(finalUrl);
-
-    for (const [
+  for (
+    const [
       key,
       value
     ] of Object.entries(
       query || {}
-    )) {
-      if (
-        value !== undefined &&
-        value !== null
-      ) {
-        url.searchParams.set(
-          key,
-          String(value)
-        );
-      }
-    }
-
-    finalUrl =
-      url.toString();
-  }
-
-  const result =
-    await fetchJson(
-      finalUrl,
-      {
-        method,
-        headers:
-          finalHeaders,
-        body
-      },
-      45000
-    );
-
-  return result.json;
-}
-
-/* =========================================================
-   NEWS DATA
-========================================================= */
-
-async function callNewsData(
-  provider,
-  topic
-) {
-  const apiKey =
-    clean(provider.apiKey);
-
-  if (!apiKey) {
-    throw new Error(
-      "NewsData.io API key missing"
-    );
-  }
-
-  const url =
-    new URL(
-      "https://newsdata.io/api/1/latest"
-    );
-
-  url.searchParams.set(
-    "apikey",
-    apiKey
-  );
-
-  url.searchParams.set(
-    "language",
-    "en"
-  );
-
-  if (topic) {
-    url.searchParams.set(
-      "q",
-      topic
-    );
-  }
-
-  const {
-    json
-  } = await fetchJson(
-    url.toString()
-  );
-
-  const results =
-    Array.isArray(
-      json.results
-    )
-      ? json.results
-      : [];
-
-  return results.map(
-    item => ({
-      title:
-        item.title ||
-        item.name ||
-        "Trending Topic",
-
-      description:
-        item.description ||
-        item.content ||
-        "",
-
-      url:
-        item.link ||
-        item.url ||
-        "",
-
-      source:
-        item.source_name ||
-        "NewsData.io",
-
-      publishedAt:
-        item.pubDate ||
-        new Date().toISOString()
-    })
-  );
-}
-
-/* =========================================================
-   GNEWS
-========================================================= */
-
-async function callGNews(
-  provider,
-  topic
-) {
-  const apiKey =
-    clean(provider.apiKey);
-
-  if (!apiKey) {
-    throw new Error(
-      "GNews API key missing"
-    );
-  }
-
-  const url =
-    new URL(
-      "https://gnews.io/api/v4/top-headlines"
-    );
-
-  url.searchParams.set(
-    "apikey",
-    apiKey
-  );
-
-  url.searchParams.set(
-    "lang",
-    "en"
-  );
-
-  url.searchParams.set(
-    "max",
-    "10"
-  );
-
-  if (topic) {
-    url.searchParams.set(
-      "q",
-      topic
-    );
-  }
-
-  const {
-    json
-  } = await fetchJson(
-    url.toString()
-  );
-
-  const articles =
-    Array.isArray(
-      json.articles
-    )
-      ? json.articles
-      : [];
-
-  return articles.map(
-    item => ({
-      title:
-        item.title ||
-        "Trending Topic",
-
-      description:
-        item.description ||
-        item.content ||
-        "",
-
-      url:
-        item.url ||
-        "",
-
-      source:
-        item.source?.name ||
-        "GNews",
-
-      publishedAt:
-        item.publishedAt ||
-        new Date().toISOString()
-    })
-  );
-}
-
-/* =========================================================
-   REDDIT
-========================================================= */
-
-async function callReddit(
-  provider,
-  topic
-) {
-  const query =
-    clean(
-      topic,
-      "trending"
-    );
-
-  const url =
-    new URL(
-      "https://www.reddit.com/search.json"
-    );
-
-  url.searchParams.set(
-    "q",
-    query
-  );
-
-  url.searchParams.set(
-    "sort",
-    "hot"
-  );
-
-  url.searchParams.set(
-    "limit",
-    "15"
-  );
-
-  const {
-    json
-  } = await fetchJson(
-    url.toString(),
-    {
-      headers: {
-        "User-Agent":
-          "PromptForge/1.0"
-      }
-    }
-  );
-
-  const children =
-    json?.data?.children ||
-    [];
-
-  return children
-    .map(
-      item =>
-        item?.data
-    )
-    .filter(Boolean)
-    .map(
-      item => ({
-        title:
-          item.title ||
-          "Reddit Trend",
-
-        description:
-          item.selftext ||
-          "",
-
-        url:
-          item.permalink
-            ? `https://www.reddit.com${item.permalink}`
-            : "",
-
-        source:
-          "Reddit",
-
-        publishedAt:
-          item.created_utc
-            ? new Date(
-                item.created_utc *
-                  1000
-              ).toISOString()
-            : new Date().toISOString()
-      })
-    );
-}
-
-/* =========================================================
-   YOUTUBE
-========================================================= */
-
-async function callYouTube(
-  provider,
-  topic
-) {
-  const apiKey =
-    clean(provider.apiKey);
-
-  if (!apiKey) {
-    throw new Error(
-      "YouTube API key missing"
-    );
-  }
-
-  const url =
-    new URL(
-      "https://www.googleapis.com/youtube/v3/search"
-    );
-
-  url.searchParams.set(
-    "part",
-    "snippet"
-  );
-
-  url.searchParams.set(
-    "type",
-    "video"
-  );
-
-  url.searchParams.set(
-    "order",
-    "viewCount"
-  );
-
-  url.searchParams.set(
-    "maxResults",
-    "15"
-  );
-
-  url.searchParams.set(
-    "key",
-    apiKey
-  );
-
-  if (topic) {
-    url.searchParams.set(
-      "q",
-      topic
-    );
-  }
-
-  const {
-    json
-  } = await fetchJson(
-    url.toString()
-  );
-
-  return (
-    json.items || []
-  ).map(
-    item => ({
-      title:
-        item.snippet?.title ||
-        "YouTube Trend",
-
-      description:
-        item.snippet?.description ||
-        "",
-
-      url:
-        item.id?.videoId
-          ? `https://www.youtube.com/watch?v=${item.id.videoId}`
-          : "",
-
-      source:
-        "YouTube",
-
-      publishedAt:
-        item.snippet?.publishedAt ||
-        new Date().toISOString()
-    })
-  );
-}
-
-/* =========================================================
-   X / TWITTER
-========================================================= */
-
-async function callX(
-  provider,
-  topic
-) {
-  const token =
-    clean(provider.apiKey);
-
-  if (!token) {
-    throw new Error(
-      "X/Twitter Bearer token missing"
-    );
-  }
-
-  const query =
-    clean(
-      topic,
-      "AI OR photography OR technology"
-    );
-
-  const url =
-    new URL(
-      "https://api.x.com/2/tweets/search/recent"
-    );
-
-  url.searchParams.set(
-    "query",
-    `${query} -is:retweet`
-  );
-
-  url.searchParams.set(
-    "max_results",
-    "20"
-  );
-
-  url.searchParams.set(
-    "tweet.fields",
-    "created_at,text,author_id"
-  );
-
-  const {
-    json
-  } = await fetchJson(
-    url.toString(),
-    {
-      headers: {
-        Authorization:
-          `Bearer ${token}`
-      }
-    }
-  );
-
-  return (
-    json.data || []
-  ).map(
-    item => ({
-      title:
-        item.text?.slice(
-          0,
-          140
-        ) ||
-        "X Trend",
-
-      description:
-        item.text || "",
-
-      url:
-        `https://x.com/i/web/status/${item.id}`,
-
-      source:
-        "X/Twitter",
-
-      publishedAt:
-        item.created_at ||
-        new Date().toISOString()
-    })
-  );
-}
-
-/* =========================================================
-   BLUESKY
-========================================================= */
-
-async function callBluesky(
-  provider,
-  topic
-) {
-  const query =
-    clean(
-      topic,
-      "AI"
-    );
-
-  const url =
-    new URL(
-      "https://public.api.bsky.app/xrpc/app.bsky.feed.searchPosts"
-    );
-
-  url.searchParams.set(
-    "q",
-    query
-  );
-
-  url.searchParams.set(
-    "limit",
-    "20"
-  );
-
-  const {
-    json
-  } = await fetchJson(
-    url.toString()
-  );
-
-  return (
-    json.posts || []
-  ).map(
-    item => ({
-      title:
-        item.record?.text?.slice(
-          0,
-          140
-        ) ||
-        "Bluesky Trend",
-
-      description:
-        item.record?.text ||
-        "",
-
-      url:
-        item.uri || "",
-
-      source:
-        "Bluesky",
-
-      publishedAt:
-        item.record?.createdAt ||
-        new Date().toISOString()
-    })
-  );
-}
-
-/* =========================================================
-   TRENDING PROVIDER DISPATCHER
-========================================================= */
-
-async function callTrendingProvider(
-  provider,
-  topic
-) {
-  if (
-    providerNameMatches(
-      provider,
-      ["NewsData.io", "NewsData"]
     )
   ) {
-    return callNewsData(
-      provider,
-      topic
-    );
-  }
-
-  if (
-    providerNameMatches(
-      provider,
-      ["GNews"]
-    )
-  ) {
-    return callGNews(
-      provider,
-      topic
-    );
-  }
-
-  if (
-    providerNameMatches(
-      provider,
-      ["Reddit"]
-    )
-  ) {
-    return callReddit(
-      provider,
-      topic
-    );
-  }
-
-  if (
-    providerNameMatches(
-      provider,
-      ["YouTube"]
-    )
-  ) {
-    return callYouTube(
-      provider,
-      topic
-    );
-  }
-
-  if (
-    providerNameMatches(
-      provider,
-      ["X/Twitter", "Twitter", "X"]
-    )
-  ) {
-    return callX(
-      provider,
-      topic
-    );
-  }
-
-  if (
-    providerNameMatches(
-      provider,
-      ["Bluesky"]
-    )
-  ) {
-    return callBluesky(
-      provider,
-      topic
-    );
-  }
-
-  return callCustomAPI(
-    provider,
-    {
-      topic,
-      category:
-        "trending_search"
-    }
-  ).then(
-    json =>
-      normalizeTrendingCustom(
-        json,
-        provider
-      )
-  );
-}
-
-/* =========================================================
-   CUSTOM TREND NORMALIZER
-========================================================= */
-
-function normalizeTrendingCustom(
-  json,
-  provider
-) {
-  const config =
-    provider.config || {};
-
-  const configuredPath =
-    clean(
-      config.responsePath ||
-        config.resultsPath
-    );
-
-  let data =
-    configuredPath
-      ? getPath(
-          json,
-          configuredPath
-        )
-      : firstValue(
-          json,
-          [
-            "results",
-            "articles",
-            "items",
-            "data",
-            "posts",
-            "news"
-          ]
-        );
-
-  if (!data) {
-    data = json;
-  }
-
-  if (!Array.isArray(data)) {
-    data = [data];
-  }
-
-  return data
-    .filter(Boolean)
-    .map(
-      item => ({
-        title:
-          clean(
-            firstValue(
-              item,
-              [
-                config.titlePath ||
-                  "",
-                "title",
-                "name",
-                "text"
-              ]
-            )
-          ) ||
-          "Trending Topic",
-
-        description:
-          clean(
-            firstValue(
-              item,
-              [
-                config.descriptionPath ||
-                  "",
-                "description",
-                "content",
-                "summary",
-                "text"
-              ]
-            )
-          ),
-
-        url:
-          httpUrl(
-            firstValue(
-              item,
-              [
-                config.urlPath ||
-                  "",
-                "url",
-                "link",
-                "permalink"
-              ]
-            )
-          ),
-
-        source:
-          clean(
-            firstValue(
-              item,
-              [
-                config.sourcePath ||
-                  "",
-                "source",
-                "source_name"
-              ]
-            )
-          ) ||
-          provider.providerName,
-
-        publishedAt:
-          firstValue(
-            item,
-            [
-              config.datePath ||
-                "",
-              "publishedAt",
-              "published_at",
-              "created_at",
-              "date"
-            ]
-          ) ||
-          new Date().toISOString()
-      })
-    );
-}
-
-/* =========================================================
-   CREATIVE SEEDS
-========================================================= */
-
-const CREATIVE_SEEDS = [
-  {
-    category:
-      "Portrait Photography",
-    seed:
-      "luxury editorial portrait"
-  },
-  {
-    category:
-      "Fashion Photography",
-    seed:
-      "premium fashion campaign"
-  },
-  {
-    category:
-      "Commercial Photography",
-    seed:
-      "cinematic commercial campaign"
-  },
-  {
-    category:
-      "Product Photography",
-    seed:
-      "minimal product photography"
-  },
-  {
-    category:
-      "Brand Design",
-    seed:
-      "premium brand campaign"
-  },
-  {
-    category:
-      "Architecture",
-    seed:
-      "futuristic architecture"
-  },
-  {
-    category:
-      "Interior Design",
-    seed:
-      "modern luxury interior"
-  },
-  {
-    category:
-      "Travel Photography",
-    seed:
-      "cinematic travel destination"
-  },
-  {
-    category:
-      "Nature Photography",
-    seed:
-      "dreamlike natural landscape"
-  },
-  {
-    category:
-      "Cinematic Photography",
-    seed:
-      "cinematic night scene"
-  },
-  {
-    category:
-      "Automotive",
-    seed:
-      "luxury automotive campaign"
-  },
-  {
-    category:
-      "Food Photography",
-    seed:
-      "creative food photography"
-  },
-  {
-    category:
-      "Editorial",
-    seed:
-      "editorial lifestyle photography"
-  },
-  {
-    category:
-      "Fantasy Art",
-    seed:
-      "fantasy cinematic environment"
-  },
-  {
-    category:
-      "Digital Art",
-    seed:
-      "surreal digital artwork"
-  },
-  {
-    category:
-      "Graphic Design",
-    seed:
-      "modern graphic design poster"
-  },
-  {
-    category:
-      "Lifestyle",
-    seed:
-      "editorial lifestyle photography"
-  },
-  {
-    category:
-      "Luxury",
-    seed:
-      "high-end luxury campaign"
-  },
-  {
-    category:
-      "Minimalist",
-    seed:
-      "minimalist studio photography"
-  },
-  {
-    category:
-      "Surreal Art",
-    seed:
-      "surreal fine art portrait"
-  }
-];
-
-function randomSeed() {
-  return CREATIVE_SEEDS[
-    Math.floor(
-      Math.random() *
-        CREATIVE_SEEDS.length
-    )
-  ];
-}
-
-/* =========================================================
-   GEMINI
-========================================================= */
-
-function extractGeminiText(
-  json
-) {
-  return (
-    json?.candidates?.[0]
-      ?.content?.parts
-      ?.map(x => x.text || "")
-      .join("\n")
-      .trim() || ""
-  );
-}
-
-function parseJsonFromText(
-  text
-) {
-  const cleaned =
-    String(text || "")
-      .replace(
-        /^```json\s*/i,
-        ""
-      )
-      .replace(
-        /^```\s*/i,
-        ""
-      )
-      .replace(
-        /```$/i,
-        ""
-      )
-      .trim();
-
-  try {
-    return JSON.parse(
-      cleaned
-    );
-  } catch {}
-
-  const start =
-    cleaned.indexOf("{");
-
-  const end =
-    cleaned.lastIndexOf("}");
-
-  if (
-    start >= 0 &&
-    end > start
-  ) {
-    try {
-      return JSON.parse(
-        cleaned.slice(
-          start,
-          end + 1
-        )
+    if (
+      value !== undefined &&
+      value !== null &&
+      value !== ""
+    ) {
+      u.searchParams.set(
+        key,
+        String(value)
       );
-    } catch {}
+    }
   }
 
-  return null;
+  return u.toString();
 }
 
-async function callGemini(
-  provider,
-  context
+
+async function fetchJson(
+  url,
+  options = {}
 ) {
-  const apiKey =
-    clean(provider.apiKey);
+  const response =
+    await fetch(
+      url,
+      {
+        ...options,
 
-  if (!apiKey) {
-    throw new Error(
-      "Gemini API key missing"
+        signal:
+          options.signal ||
+          AbortSignal.timeout(
+            30000
+          )
+      }
     );
-  }
-
-  const model =
-    clean(
-      provider.config?.model,
-      "gemini-3.5-flash-lite"
-    );
-
-  const endpoint =
-    `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(
-      model
-    )}:generateContent?key=${encodeURIComponent(
-      apiKey
-    )}`;
-
-  const seed =
-    context.seed ||
-    "premium AI visual concept";
-
-  const trend =
-    context.trend ||
-    "";
-
-  const prompt = `
-You are a professional creative director for an AI visual prompt website.
-
-Create ONE original visual concept.
-
-Category:
-${context.category}
-
-Creative seed:
-${seed}
-
-Optional trend signal:
-${trend}
-
-Return ONLY valid JSON in this exact format:
-
-{
-  "title": "short premium title",
-  "prompt": "detailed image generation prompt",
-  "category": "category name"
-}
-
-The image prompt must describe:
-subject, composition, camera, lens, lighting,
-materials/textures, environment, atmosphere,
-color grading, depth, realism and professional
-photography/art direction.
-
-Do not mention copyrighted characters.
-Do not copy an existing artwork.
-Do not include explanations outside JSON.
-`;
-
-  const {
-    json
-  } = await fetchJson(
-    endpoint,
-    {
-      method: "POST",
-      headers: {
-        "Content-Type":
-          "application/json"
-      },
-      body: JSON.stringify({
-        contents: [
-          {
-            parts: [
-              {
-                text: prompt
-              }
-            ]
-          }
-        ],
-        generationConfig: {
-          temperature: 0.9,
-          maxOutputTokens: 1800
-        }
-      })
-    },
-    60000
-  );
 
   const text =
-    extractGeminiText(json);
+    await response.text();
 
-  if (!text) {
-    throw new Error(
-      "Gemini returned empty response"
-    );
-  }
-
-  const parsed =
-    parseJsonFromText(text);
-
-  if (!parsed) {
-    throw new Error(
-      "Gemini returned invalid JSON"
-    );
-  }
-
-  if (
-    !parsed.title ||
-    !parsed.prompt
-  ) {
-    throw new Error(
-      "Gemini response missing title/prompt"
-    );
-  }
-
-  return {
-    title:
-      uniqueTitle(
-        parsed.title
-      ),
-
-    prompt:
-      clean(
-        parsed.prompt
-      ),
-
-    category:
-      clean(
-        parsed.category,
-        context.category
-      )
-  };
-}
-
-/* =========================================================
-   CUSTOM PROMPT PROVIDER
-========================================================= */
-
-function normalizeCustomPrompt(
-  json,
-  provider,
-  context
-) {
-  const config =
-    provider.config || {};
-
-  const root =
-    config.responsePath
-      ? getPath(
-          json,
-          config.responsePath
-        )
-      : json;
-
-  const title =
-    clean(
-      firstValue(
-        root,
-        [
-          config.titlePath ||
-            "",
-          "title",
-          "name"
-        ]
-      )
-    ) ||
-    `${context.category} Concept`;
-
-  const prompt =
-    clean(
-      firstValue(
-        root,
-        [
-          config.promptPath ||
-            "",
-          "prompt",
-          "text",
-          "content",
-          "output",
-          "response"
-        ]
-      )
-    );
-
-  if (!prompt) {
-    throw new Error(
-      `${provider.providerName}: prompt field not found in response`
-    );
-  }
-
-  return {
-    title,
-    prompt,
-    category:
-      clean(
-        firstValue(
-          root,
-          [
-            config.categoryPath ||
-              "",
-            "category"
-          ]
-        )
-      ) ||
-      context.category
-  };
-}
-
-async function callPromptProvider(
-  provider,
-  context
-) {
-  if (
-    providerNameMatches(
-      provider,
-      ["Gemini"]
-    )
-  ) {
-    return callGemini(
-      provider,
-      context
-    );
-  }
-
-  const json =
-    await callCustomAPI(
-      provider,
-      {
-        ...context,
-        category:
-          "prompt_generate"
-      }
-    );
-
-  return normalizeCustomPrompt(
-    json,
-    provider,
-    context
-  );
-}
-
-/* =========================================================
-   POLLINATIONS
-========================================================= */
-
-async function callPollinations(
-  provider,
-  prompt
-) {
-  const encoded =
-    encodeURIComponent(
-      prompt
-    );
-
-  const seed =
-    Math.floor(
-      Math.random() *
-        1000000000
-    );
-
-  const model =
-    clean(
-      provider.config?.model,
-      "flux"
-    );
-
-  const url =
-    `https://image.pollinations.ai/prompt/${encoded}?model=${encodeURIComponent(
-      model
-    )}&width=1024&height=1024&nologo=true&seed=${seed}`;
-
-  return {
-    imageUrl: url,
-    model:
-      "Pollinations"
-  };
-}
-
-/* =========================================================
-   HUGGING FACE
-========================================================= */
-
-async function callHuggingFace(
-  provider,
-  prompt
-) {
-  const token =
-    clean(provider.apiKey);
-
-  if (!token) {
-    throw new Error(
-      "Hugging Face API key missing"
-    );
-  }
-
-  const model =
-    clean(
-      provider.config?.model,
-      "black-forest-labs/FLUX.1-schnell"
-    );
-
-  const endpoint =
-    `https://api-inference.huggingface.co/models/${encodeURIComponent(
-      model
-    )}`;
-
-  const {
-    buffer
-  } = await fetchBinary(
-    endpoint,
-    {
-      method: "POST",
-
-      headers: {
-        Authorization:
-          `Bearer ${token}`,
-        "Content-Type":
-          "application/json"
-      },
-
-      body: JSON.stringify({
-        inputs: prompt
-      })
-    },
-    120000
-  );
-
-  return {
-    buffer,
-    model:
-      `Hugging Face / ${model}`
-  };
-}
-
-/* =========================================================
-   CUSTOM IMAGE API
-========================================================= */
-
-async function callCustomImage(
-  provider,
-  prompt
-) {
-  const json =
-    await callCustomAPI(
-      provider,
-      {
-        prompt,
-        category:
-          "photo_generate"
-      }
-    );
-
-  const config =
-    provider.config || {};
-
-  const root =
-    config.responsePath
-      ? getPath(
-          json,
-          config.responsePath
-        )
-      : json;
-
-  const imageUrl =
-    httpUrl(
-      firstValue(
-        root,
-        [
-          config.imagePath ||
-            "",
-          "imageUrl",
-          "image_url",
-          "url",
-          "output",
-          "image"
-        ]
-      )
-    );
-
-  if (imageUrl) {
-    return {
-      imageUrl,
-      model:
-        provider.providerName
-    };
-  }
-
-  const base64 =
-    firstValue(
-      root,
-      [
-        config.base64Path ||
-          "",
-        "base64",
-        "image_base64",
-        "b64_json"
-      ]
-    );
-
-  if (
-    base64 &&
-    typeof base64 === "string"
-  ) {
-    let data =
-      base64;
-
-    if (
-      !data.startsWith(
-        "data:image"
-      )
-    ) {
-      data =
-        `data:image/png;base64,${data}`;
-    }
-
-    return {
-      dataUrl: data,
-      model:
-        provider.providerName
-    };
-  }
-
-  throw new Error(
-    `${provider.providerName}: image URL/base64 not found in response`
-  );
-}
-
-/* =========================================================
-   IMAGE PROVIDER DISPATCH
-========================================================= */
-
-async function callImageProvider(
-  provider,
-  prompt
-) {
-  if (
-    providerNameMatches(
-      provider,
-      ["Pollinations"]
-    )
-  ) {
-    return callPollinations(
-      provider,
-      prompt
-    );
-  }
-
-  if (
-    providerNameMatches(
-      provider,
-      [
-        "Hugging Face",
-        "HuggingFace"
-      ]
-    )
-  ) {
-    return callHuggingFace(
-      provider,
-      prompt
-    );
-  }
-
-  return callCustomImage(
-    provider,
-    prompt
-  );
-}
-
-/* =========================================================
-   CLOUDINARY UPLOAD
-========================================================= */
-
-async function uploadToCloudinary(
-  source
-) {
-  if (!cloudinaryEnabled) {
-    return {
-      url:
-        typeof source === "string"
-          ? source
-          : "",
-      publicId: ""
-    };
-  }
-
-  if (
-    typeof source === "string" &&
-    /^https?:\/\//i.test(
-      source
-    )
-  ) {
-    const result =
-      await cloudinary.uploader.upload(
-        source,
-        {
-          folder:
-            "promptforge/generated",
-          resource_type:
-            "image"
-        }
-      );
-
-    return {
-      url:
-        result.secure_url,
-      publicId:
-        result.public_id
-    };
-  }
-
-  if (
-    Buffer.isBuffer(source)
-  ) {
-    const result =
-      await new Promise(
-        (
-          resolve,
-          reject
-        ) => {
-          const stream =
-            cloudinary.uploader.upload_stream(
-              {
-                folder:
-                  "promptforge/generated",
-                resource_type:
-                  "image"
-              },
-              (
-                error,
-                result
-              ) => {
-                if (error) {
-                  reject(error);
-                } else {
-                  resolve(
-                    result
-                  );
-                }
-              }
-            );
-
-          stream.end(source);
-        }
-      );
-
-    return {
-      url:
-        result.secure_url,
-      publicId:
-        result.public_id
-    };
-  }
-
-  throw new Error(
-    "Unsupported image source"
-  );
-}
-
-/* =========================================================
-   IMAGE SOURCE TO CLOUDINARY
-========================================================= */
-
-async function storeGeneratedImage(
-  result
-) {
-  if (result.imageUrl) {
-    return uploadToCloudinary(
-      result.imageUrl
-    );
-  }
-
-  if (result.dataUrl) {
-    if (!cloudinaryEnabled) {
-      return {
-        url:
-          result.dataUrl,
-        publicId: ""
-      };
-    }
-
-    const uploaded =
-      await cloudinary.uploader.upload(
-        result.dataUrl,
-        {
-          folder:
-            "promptforge/generated",
-          resource_type:
-            "image"
-        }
-      );
-
-    return {
-      url:
-        uploaded.secure_url,
-      publicId:
-        uploaded.public_id
-    };
-  }
-
-  if (result.buffer) {
-    return uploadToCloudinary(
-      result.buffer
-    );
-  }
-
-  throw new Error(
-    "Image provider returned no usable image"
-  );
-}
-
-/* =========================================================
-   TREND FETCH WITH ROTATION + FALLBACK
-========================================================= */
-
-async function getTrendingTopic(
-  providers
-) {
-  const list =
-    orderedProviders(
-      providers,
-      "trending_search"
-    );
-
-  if (!list.length) {
-    console.log(
-      "[AUTO] No trending API configured. Using creative seed."
-    );
-
-    const seed =
-      randomSeed();
-
-    return {
-      topic:
-        seed.seed,
-      title:
-        seed.seed,
-      source:
-        "Creative Seed",
-      category:
-        seed.category
-    };
-  }
-
-  const errors = [];
-
-  for (
-    let i = 0;
-    i < list.length;
-    i++
-  ) {
-    const provider =
-      list[i];
-
-    try {
-      const items =
-        await callTrendingProvider(
-          provider,
-          ""
-        );
-
-      if (
-        !Array.isArray(items) ||
-        !items.length
-      ) {
-        throw new Error(
-          "No trend results"
-        );
-      }
-
-      /*
-        Successful provider becomes
-        the current provider for this
-        category, and next run moves
-        to the next provider.
-      */
-
-      const globalList =
-        providersFor(
-          providers,
-          "trending_search"
-        );
-
-      const position =
-        globalList.findIndex(
-          p =>
-            String(p.id) ===
-            String(provider.id)
-        );
-
-      if (position >= 0) {
-        rotationState.trending_search =
-          (position + 1) %
-          globalList.length;
-      }
-
-      const item =
-        items[
-          Math.floor(
-            Math.random() *
-              items.length
-          )
-        ];
-
-      return {
-        topic:
-          item.title ||
-          "creative visual",
-        title:
-          item.title ||
-          "Trending Visual",
-        description:
-          item.description ||
-          "",
-        source:
-          item.source ||
-          provider.providerName,
-        sourceUrl:
-          item.url ||
-          "",
-        category:
-          randomSeed().category
-      };
-    } catch (error) {
-      console.error(
-        `[AUTO] Trending ${provider.providerName} failed:`,
-        error.message
-      );
-
-      errors.push(
-        `${provider.providerName}: ${error.message}`
-      );
-
-      continue;
-    }
-  }
-
-  console.warn(
-    "[AUTO] All trending APIs failed. Using creative seed."
-  );
-
-  const seed =
-    randomSeed();
-
-  return {
-    topic:
-      seed.seed,
-    title:
-      seed.seed,
-    source:
-      "Creative Seed",
-    category:
-      seed.category,
-    errors
-  };
-}
-
-/* =========================================================
-   PROMPT GENERATION WITH ROTATION
-========================================================= */
-
-async function generatePrompt(
-  providers,
-  context
-) {
-  const list =
-    orderedProviders(
-      providers,
-      "prompt_generate"
-    );
-
-  if (!list.length) {
-    throw new Error(
-      "No Prompt Generate API configured."
-    );
-  }
-
-  const errors = [];
-
-  for (
-    let i = 0;
-    i < list.length;
-    i++
-  ) {
-    const provider =
-      list[i];
-
-    try {
-      console.log(
-        `[AUTO] Prompt Generate: trying ${provider.providerName}`
-      );
-
-      const result =
-        await callPromptProvider(
-          provider,
-          context
-        );
-
-      const globalList =
-        providersFor(
-          providers,
-          "prompt_generate"
-        );
-
-      const position =
-        globalList.findIndex(
-          p =>
-            String(p.id) ===
-            String(provider.id)
-        );
-
-      if (position >= 0) {
-        rotationState.prompt_generate =
-          (position + 1) %
-          globalList.length;
-      }
-
-      return {
-        ...result,
-        provider:
-          provider.providerName
-      };
-    } catch (error) {
-      console.error(
-        `[AUTO] Prompt Generate ${provider.providerName} failed:`,
-        error.message
-      );
-
-      errors.push(
-        `${provider.providerName}: ${error.message}`
-      );
-    }
-  }
-
-  throw new Error(
-    `All Prompt Generate APIs failed: ${errors.join(
-      " | "
-    )}`
-  );
-}
-
-/* =========================================================
-   IMAGE GENERATION WITH ROTATION
-========================================================= */
-
-async function generateImage(
-  providers,
-  prompt
-) {
-  const list =
-    orderedProviders(
-      providers,
-      "photo_generate"
-    );
-
-  if (!list.length) {
-    throw new Error(
-      "No Photo Generate API configured."
-    );
-  }
-
-  const errors = [];
-
-  for (
-    let i = 0;
-    i < list.length;
-    i++
-  ) {
-    const provider =
-      list[i];
-
-    try {
-      console.log(
-        `[AUTO] Image Generate: trying ${provider.providerName}`
-      );
-
-      const result =
-        await callImageProvider(
-          provider,
-          prompt
-        );
-
-      const globalList =
-        providersFor(
-          providers,
-          "photo_generate"
-        );
-
-      const position =
-        globalList.findIndex(
-          p =>
-            String(p.id) ===
-            String(provider.id)
-        );
-
-      if (position >= 0) {
-        rotationState.photo_generate =
-          (position + 1) %
-          globalList.length;
-      }
-
-      return {
-        ...result,
-        provider:
-          provider.providerName
-      };
-    } catch (error) {
-      console.error(
-        `[AUTO] Image Generate ${provider.providerName} failed:`,
-        error.message
-      );
-
-      errors.push(
-        `${provider.providerName}: ${error.message}`
-      );
-    }
-  }
-
-  throw new Error(
-    `All Photo Generate APIs failed: ${errors.join(
-      " | "
-    )}`
-  );
-}
-
-/* =========================================================
-   AUTO POST
-========================================================= */
-
-let postingNow = false;
-
-async function createAutomaticPost() {
-  if (postingNow) {
-    return {
-      ok: false,
-      reason:
-        "Another automatic post is already running."
-    };
-  }
-
-  postingNow = true;
+  let data;
 
   try {
-    const settings =
-      await getSettings();
-
-    if (
-      settings.autoPost === false
-    ) {
-      return {
-        ok: false,
-        reason:
-          "Automatic posting is disabled."
-      };
-    }
-
-    const providers =
-      await getProviders();
-
-    console.log(
-      "[AUTO] Starting automatic post..."
-    );
-
-    /*
-      STEP 1
-      Trending / social signal
-    */
-
-    const trend =
-      await getTrendingTopic(
-        providers
-      );
-
-    console.log(
-      `[AUTO] Trending signal: ${trend.topic}`
-    );
-
-    /*
-      STEP 2
-      Choose creative category
-    */
-
-    const seed =
-      randomSeed();
-
-    const category =
-      seed.category;
-
-    /*
-      STEP 3
-      Gemini/custom prompt API
-    */
-
-    const generated =
-      await generatePrompt(
-        providers,
-        {
-          trend:
-            trend.title ||
-            trend.topic ||
-            "",
-          seed:
-            seed.seed,
-          category
-        }
-      );
-
-    console.log(
-      `[AUTO] Prompt created by ${generated.provider}`
-    );
-
-    /*
-      STEP 4
-      Photo/image API
-    */
-
-    const image =
-      await generateImage(
-        providers,
-        generated.prompt
-      );
-
-    console.log(
-      `[AUTO] Image created by ${image.provider}`
-    );
-
-    /*
-      STEP 5
-      Cloudinary
-    */
-
-    const stored =
-      await storeGeneratedImage(
-        image
-      );
-
-    console.log(
-      `[AUTO] Image stored: ${stored.url}`
-    );
-
-    /*
-      STEP 6
-      Save post to Supabase
-    */
-
-    const title =
-      uniqueTitle(
-        generated.title ||
-          trend.title ||
-          `${category} Visual`
-      );
-
-    const saved =
-      await addPrompt({
-        slug:
-          slugify(title) +
-          "-" +
-          Date.now()
-            .toString(36),
-
-        title,
-
-        prompt:
-          generated.prompt,
-
-        category:
-          generated.category ||
-          category,
-
-        media:
-          "Image",
-
-        imageUrl:
-          stored.url,
-
-        model:
-          image.model ||
-          image.provider ||
-          "AI",
-
-        source:
-          `AI Visual Inspiration · ${generated.provider} · ${image.provider}`
-      });
-
-    console.log(
-      `[AUTO] Published: ${saved.id || title}`
-    );
-
-    return {
-      ok: true,
-
-      post: {
-        id:
-          saved.id,
-        title,
-        prompt:
-          generated.prompt,
-        imageUrl:
-          stored.url,
-        category:
-          generated.category ||
-          category,
-        promptProvider:
-          generated.provider,
-        imageProvider:
-          image.provider,
-        source:
-          `AI Visual Inspiration · ${generated.provider} · ${image.provider}`
-      },
-
-      trend
+    data =
+      JSON.parse(text);
+  } catch {
+    data = {
+      text
     };
-  } finally {
-    postingNow = false;
   }
+
+  if (
+    !response.ok
+  ) {
+    throw new Error(
+      `HTTP ${response.status}`
+    );
+  }
+
+  return data;
 }
 
-/* =========================================================
-   PUBLIC API
-========================================================= */
 
-app.get(
-  "/api/prompts",
-  async (req, res) => {
-    try {
-      const prompts =
-        await getPrompts();
-
-      const q =
-        clean(
-          req.query.q
-        ).toLowerCase();
-
-      const category =
-        clean(
-          req.query.category
-        ).toLowerCase();
-
-      const media =
-        clean(
-          req.query.media
-        ).toLowerCase();
-
-      const filtered =
-        prompts.filter(
-          item => {
-            const text =
-              [
-                item.title,
-                item.prompt,
-                item.category,
-                item.model
-              ]
-                .join(" ")
-                .toLowerCase();
-
-            return (
-              (!q ||
-                text.includes(q)) &&
-              (!category ||
-                category === "all" ||
-                String(
-                  item.category
-                ).toLowerCase() ===
-                  category) &&
-              (!media ||
-                media === "all" ||
-                String(
-                  item.media
-                ).toLowerCase() ===
-                  media)
-            );
-          }
-        );
-
-      res.json(
-        filtered
-      );
-    } catch (error) {
-      console.error(
-        error
-      );
-
-      res.status(500).json({
-        error:
-          "Unable to load prompts"
-      });
-    }
-  }
-);
-
-app.get(
-  "/api/prompts/:slug",
-  async (req, res) => {
-    try {
-      const prompt =
-        await getPromptBySlug(
-          req.params.slug
-        );
-
-      if (!prompt) {
-        return res
-          .status(404)
-          .json({
-            error:
-              "Not found"
-          });
+async function fetchBinary(
+  url
+) {
+  const response =
+    await fetch(
+      url,
+      {
+        signal:
+          AbortSignal.timeout(
+            60000
+          )
       }
-
-      res.json(prompt);
-    } catch (error) {
-      res.status(500).json({
-        error:
-          "Unable to load prompt"
-      });
-    }
-  }
-);
-
-/* =========================================================
-   PUBLIC SETTINGS
-========================================================= */
-
-app.get(
-  "/api/public/settings",
-  async (req, res) => {
-    try {
-      const settings =
-        await getSettings();
-
-      res.json({
-        copyGateSeconds:
-          settings.copyGateSeconds,
-        directLink:
-          settings.directLink
-      });
-    } catch {
-      res.status(500).json({
-        error:
-          "Unable to load settings"
-      });
-    }
-  }
-);
-
-/* =========================================================
-   ADS PUBLIC
-========================================================= */
-
-app.get(
-  "/api/ads",
-  async (req, res) => {
-    try {
-      const ads =
-        await getAds();
-
-      res.set(
-        "Cache-Control",
-        "no-store"
-      );
-
-      res.json(ads);
-    } catch (error) {
-      console.error(
-        "[ADS]",
-        error
-      );
-
-      res.status(500).json({
-        error:
-          "Unable to load ads"
-      });
-    }
-  }
-);
-
-/* =========================================================
-   API V1
-========================================================= */
-
-app.use(
-  "/api/v1",
-  (req, res, next) => {
-    res.set(
-      "Access-Control-Allow-Origin",
-      "*"
     );
 
-    next();
+  if (
+    !response.ok
+  ) {
+    throw new Error(
+      `Image HTTP ${response.status}`
+    );
   }
-);
 
-app.get(
-  "/api/v1/prompts",
-  async (req, res) => {
-    try {
-      const all =
-        await getPrompts();
+  const buffer =
+    Buffer.from(
+      await response.arrayBuffer()
+    );
 
-      const limit =
-        Math.min(
-          100,
-          Math.max(
-            1,
-            safeNumber(
-              req.query.limit,
-              20
-            )
-          )
-        );
+  return buffer;
+}
 
-      const page =
-        Math.max(
-          1,
-          safeNumber(
-            req.query.page,
-            1
-          )
-        );
-
-      const start =
-        (page - 1) *
-        limit;
-
-      res.json({
-        data:
-          all.slice(
-            start,
-            start + limit
-          ),
-
-        meta: {
-          total:
-            all.length,
-
-          page,
-
-          limit,
-
-          pages:
-            Math.ceil(
-              all.length /
-                limit
-            )
-        }
-      });
-    } catch {
-      res.status(500).json({
-        error:
-          "Unable to load prompts"
-      });
-    }
-  }
-);
-
-app.get(
-  "/api/v1/prompts/:slug",
-  async (req, res) => {
-    try {
-      const prompt =
-        await getPromptBySlug(
-          req.params.slug
-        );
-
-      if (!prompt) {
-        return res
-          .status(404)
-          .json({
-            error:
-              "Not found"
-          });
-      }
-
-      res.json(prompt);
-    } catch {
-      res.status(500).json({
-        error:
-          "Unable to load prompt"
-      });
-    }
-  }
-);
 
 /* =========================================================
-   AUTH
+   ADMIN
+========================================================= */
+
+const admin = (
+  req,
+  res,
+  next
+) => {
+  if (
+    req.session &&
+    req.session.admin
+  ) {
+    return next();
+  }
+
+  return res
+    .status(401)
+    .json({
+      error:
+        "Unauthorized"
+    });
+};
+
+
+/* =========================================================
+   LOGIN
 ========================================================= */
 
 const failedLogins =
   new Map();
 
+
+function hashValue(
+  value
+) {
+  return crypto
+    .createHash("sha256")
+    .update(
+      String(value)
+    )
+    .digest();
+}
+
+
 function safeCompare(
   a,
   b
 ) {
-  const aa =
-    crypto
-      .createHash("sha256")
-      .update(
-        String(a || "")
-      )
-      .digest();
+  const x =
+    hashValue(a);
 
-  const bb =
-    crypto
-      .createHash("sha256")
-      .update(
-        String(b || "")
-      )
-      .digest();
+  const y =
+    hashValue(b);
 
   return crypto.timingSafeEqual(
-    aa,
-    bb
+    x,
+    y
   );
 }
+
 
 app.post(
   "/api/login",
   (req, res) => {
+
     const username =
       clean(
         req.body?.username
@@ -3073,53 +497,59 @@ app.post(
         req.body?.password
       );
 
-    const adminUsername =
+    const expectedUser =
       process.env.ADMIN_USERNAME ||
       "admin";
 
-    const adminPassword =
+    const expectedPassword =
       process.env.ADMIN_PASSWORD;
 
-    if (!adminPassword) {
-      return res.status(503).json({
-        error:
-          "ADMIN_PASSWORD is not configured."
-      });
+    if (
+      !expectedPassword
+    ) {
+      return res
+        .status(503)
+        .json({
+          error:
+            "ADMIN_PASSWORD is not configured."
+        });
     }
 
-    const ip =
+    const key =
       req.ip || "unknown";
 
-    const fail =
-      failedLogins.get(ip) || {
+    const failed =
+      failedLogins.get(key) || {
         count: 0,
-        last: 0
+        time: 0
       };
 
     if (
-      fail.count >= 5 &&
+      failed.count >= 5 &&
       Date.now() -
-        fail.last <
+        failed.time <
         15 * 60 * 1000
     ) {
-      return res.status(429).json({
-        error:
-          "Too many login attempts. Try again later."
-      });
+      return res
+        .status(429)
+        .json({
+          error:
+            "Too many attempts."
+        });
     }
 
     if (
       safeCompare(
         username,
-        adminUsername
+        expectedUser
       ) &&
       safeCompare(
         password,
-        adminPassword
+        expectedPassword
       )
     ) {
       failedLogins.delete(
-        ip
+        key
       );
 
       req.session.admin =
@@ -3131,34 +561,36 @@ app.post(
     }
 
     failedLogins.set(
-      ip,
+      key,
       {
         count:
-          fail.count + 1,
-        last:
-          Date.now()
+          failed.count + 1,
+        time: Date.now()
       }
     );
 
-    res.status(401).json({
-      error:
-        "Invalid username or password."
-    });
+    return res
+      .status(401)
+      .json({
+        error:
+          "Invalid credentials."
+      });
   }
 );
+
 
 app.post(
   "/api/logout",
   (req, res) => {
     req.session.destroy(
-      () => {
+      () =>
         res.json({
           ok: true
-        });
-      }
+        })
     );
   }
 );
+
 
 app.get(
   "/api/admin/me",
@@ -3170,22 +602,136 @@ app.get(
   }
 );
 
-function admin(
-  req,
-  res,
-  next
-) {
-  if (
-    req.session?.admin
-  ) {
-    return next();
-  }
 
-  res.status(401).json({
-    error:
-      "Unauthorized"
-  });
-}
+/* =========================================================
+   PUBLIC PROMPTS
+========================================================= */
+
+app.get(
+  "/api/prompts",
+  async (req, res) => {
+    try {
+
+      const prompts =
+        await getPrompts();
+
+      const q =
+        clean(
+          req.query.q
+        ).toLowerCase();
+
+      const media =
+        clean(
+          req.query.media
+        ).toLowerCase();
+
+      const category =
+        clean(
+          req.query.category
+        ).toLowerCase();
+
+      const filtered =
+        prompts.filter(
+          item => {
+
+            const text =
+              [
+                item.title,
+                item.prompt,
+                item.category,
+                item.model
+              ]
+                .join(" ")
+                .toLowerCase();
+
+            if (
+              q &&
+              !text.includes(q)
+            ) {
+              return false;
+            }
+
+            if (
+              media &&
+              media !== "all" &&
+              String(
+                item.media || ""
+              ).toLowerCase() !==
+                media
+            ) {
+              return false;
+            }
+
+            if (
+              category &&
+              category !== "all" &&
+              String(
+                item.category ||
+                  ""
+              ).toLowerCase() !==
+                category
+            ) {
+              return false;
+            }
+
+            return true;
+          }
+        );
+
+      res.json(
+        filtered
+      );
+
+    } catch (error) {
+
+      console.error(
+        "Prompts:",
+        error
+      );
+
+      res.status(500).json({
+        error:
+          "Failed to load prompts."
+      });
+    }
+  }
+);
+
+
+app.get(
+  "/api/prompts/:slug",
+  async (req, res) => {
+
+    try {
+
+      const prompt =
+        await getPromptBySlug(
+          req.params.slug
+        );
+
+      if (!prompt) {
+        return res
+          .status(404)
+          .json({
+            error:
+              "Not found"
+          });
+      }
+
+      res.json(
+        prompt
+      );
+
+    } catch (error) {
+
+      res.status(500).json({
+        error:
+          error.message
+      });
+    }
+  }
+);
+
 
 /* =========================================================
    ADMIN PROMPTS
@@ -3195,24 +741,32 @@ app.get(
   "/api/admin/prompts",
   admin,
   async (req, res) => {
+
     try {
+
       res.json(
         await getPrompts()
       );
-    } catch {
+
+    } catch (error) {
+
       res.status(500).json({
         error:
-          "Unable to load prompts"
+          error.message
       });
+
     }
   }
 );
+
 
 app.post(
   "/api/admin/prompts",
   admin,
   async (req, res) => {
+
     try {
+
       const body =
         req.body || {};
 
@@ -3220,13 +774,15 @@ app.post(
         !body.title ||
         !body.prompt
       ) {
-        return res.status(400).json({
-          error:
-            "Title and prompt are required."
-        });
+        return res
+          .status(400)
+          .json({
+            error:
+              "Title and prompt are required."
+          });
       }
 
-      const saved =
+      const item =
         await addPrompt({
           slug:
             slugify(
@@ -3264,10 +820,13 @@ app.post(
         });
 
       res.json(
-        saved
+        item
       );
+
     } catch (error) {
+
       console.error(
+        "Manual publish:",
         error
       );
 
@@ -3279,11 +838,14 @@ app.post(
   }
 );
 
+
 app.delete(
   "/api/admin/prompts/:id",
   admin,
   async (req, res) => {
+
     try {
+
       await deletePrompt(
         req.params.id
       );
@@ -3291,7 +853,9 @@ app.delete(
       res.json({
         ok: true
       });
+
     } catch (error) {
+
       res.status(500).json({
         error:
           error.message
@@ -3300,41 +864,29 @@ app.delete(
   }
 );
 
+
 /* =========================================================
-   ADMIN PROVIDERS
+   API PROVIDERS
 ========================================================= */
 
 app.get(
   "/api/admin/providers",
   admin,
   async (req, res) => {
+
     try {
+
       const providers =
         await getProviders();
 
-      /*
-        Do not expose API keys
-        to browser.
-      */
-
       res.json(
-        providers.map(
-          provider => ({
-            ...provider,
-
-            apiKey:
-              provider.apiKey
-                ? "••••••••"
-                : "",
-
-            hasApiKey:
-              !!provider.apiKey
-          })
-        )
+        providers
       );
+
     } catch (error) {
+
       console.error(
-        "[ADMIN PROVIDERS]",
+        "Providers:",
         error
       );
 
@@ -3345,98 +897,67 @@ app.get(
     }
   }
 );
+
 
 app.post(
   "/api/admin/providers",
   admin,
   async (req, res) => {
+
     try {
+
       const body =
         req.body || {};
 
-      const category =
-        clean(
-          body.category
-        );
-
-      const providerName =
-        clean(
-          body.providerName ||
-            body.provider_name ||
-            body.name
-        );
-
       if (
-        !category ||
-        !providerName
+        !body.category
       ) {
-        return res.status(400).json({
-          error:
-            "Category and provider name are required."
-        });
+        return res
+          .status(400)
+          .json({
+            error:
+              "Category required."
+          });
       }
 
-      const allowedCategories = [
-        "trending_search",
-        "prompt_generate",
-        "photo_generate"
-      ];
-
       if (
-        !allowedCategories.includes(
-          category
-        )
+        !body.providerName
       ) {
-        return res.status(400).json({
-          error:
-            "Invalid provider category."
-        });
+        return res
+          .status(400)
+          .json({
+            error:
+              "Provider name required."
+          });
       }
 
       const provider =
         await addProvider({
-          category,
+          category:
+            body.category,
 
-          providerName,
+          providerName:
+            body.providerName,
 
           apiKey:
-            clean(
-              body.apiKey ||
-                body.api_key
-            ),
+            body.apiKey ||
+            "",
 
           enabled:
-            body.enabled ===
-            undefined
-              ? true
-              : !!body.enabled,
+            body.enabled !== false,
 
           config:
-            body.config &&
-            typeof body.config ===
-              "object"
-              ? body.config
-              : {}
+            body.config || {}
         });
 
-      res.json({
-        ok: true,
+      res.json(
+        provider
+      );
 
-        provider: {
-          ...provider,
-
-          apiKey:
-            provider.apiKey
-              ? "••••••••"
-              : "",
-
-          hasApiKey:
-            !!provider.apiKey
-        }
-      });
     } catch (error) {
+
       console.error(
-        "[ADD PROVIDER]",
+        "Add provider:",
         error
       );
 
@@ -3448,91 +969,25 @@ app.post(
   }
 );
 
-app.put(
+
+app.patch(
   "/api/admin/providers/:id",
   admin,
   async (req, res) => {
+
     try {
-      const body =
-        req.body || {};
-
-      const updates =
-        {};
-
-      if (
-        body.category !==
-        undefined
-      ) {
-        updates.category =
-          body.category;
-      }
-
-      if (
-        body.providerName !==
-        undefined
-      ) {
-        updates.providerName =
-          body.providerName;
-      }
-
-      /*
-        If browser sends masked
-        API key, keep old key.
-      */
-
-      if (
-        body.apiKey !==
-          undefined &&
-        !String(
-          body.apiKey
-        ).startsWith("••")
-      ) {
-        updates.apiKey =
-          body.apiKey;
-      }
-
-      if (
-        body.enabled !==
-        undefined
-      ) {
-        updates.enabled =
-          !!body.enabled;
-      }
-
-      if (
-        body.config !==
-        undefined
-      ) {
-        updates.config =
-          body.config;
-      }
 
       const provider =
         await updateProvider(
           req.params.id,
-          updates
+          req.body || {}
         );
 
-      res.json({
-        ok: true,
-
-        provider: {
-          ...provider,
-
-          apiKey:
-            provider.apiKey
-              ? "••••••••"
-              : "",
-
-          hasApiKey:
-            !!provider.apiKey
-        }
-      });
-    } catch (error) {
-      console.error(
-        "[UPDATE PROVIDER]",
-        error
+      res.json(
+        provider
       );
+
+    } catch (error) {
 
       res.status(500).json({
         error:
@@ -3541,12 +996,15 @@ app.put(
     }
   }
 );
+
 
 app.delete(
   "/api/admin/providers/:id",
   admin,
   async (req, res) => {
+
     try {
+
       await deleteProvider(
         req.params.id
       );
@@ -3554,7 +1012,9 @@ app.delete(
       res.json({
         ok: true
       });
+
     } catch (error) {
+
       res.status(500).json({
         error:
           error.message
@@ -3563,19 +1023,24 @@ app.delete(
   }
 );
 
+
 /* =========================================================
-   ADMIN SETTINGS
+   SETTINGS
 ========================================================= */
 
 app.get(
   "/api/admin/settings",
   admin,
   async (req, res) => {
+
     try {
+
       res.json(
         await getSettings()
       );
+
     } catch (error) {
+
       res.status(500).json({
         error:
           error.message
@@ -3583,73 +1048,71 @@ app.get(
     }
   }
 );
+
+
+app.get(
+  "/api/public/settings",
+  async (req, res) => {
+
+    try {
+
+      const settings =
+        await getSettings();
+
+      res.json({
+        copyGateSeconds:
+          settings.copyGateSeconds,
+
+        directLink:
+          settings.directLink
+      });
+
+    } catch (error) {
+
+      res.status(500).json({
+        error:
+          error.message
+      });
+    }
+  }
+);
+
 
 app.post(
   "/api/admin/settings",
   admin,
   async (req, res) => {
+
     try {
+
       const body =
         req.body || {};
 
-      const current =
-        await getSettings();
-
-      const saved =
+      const settings =
         await saveSettings({
           autoPost:
-            body.autoPost !==
-            undefined
-              ? !!body.autoPost
-              : body.autoPostEnabled !==
-                undefined
-              ? !!body.autoPostEnabled
-              : current.autoPost,
+            body.autoPost,
 
           postIntervalMinutes:
-            body.postIntervalMinutes !==
-            undefined
-              ? safeNumber(
-                  body.postIntervalMinutes,
-                  60
-                )
-              : current.postIntervalMinutes,
+            body.postIntervalMinutes,
 
           postsPerRun:
-            body.postsPerRun !==
-            undefined
-              ? safeNumber(
-                  body.postsPerRun,
-                  1
-                )
-              : current.postsPerRun,
+            body.postsPerRun,
 
           copyGateSeconds:
-            body.copyGateSeconds !==
-            undefined
-              ? safeNumber(
-                  body.copyGateSeconds,
-                  10
-                )
-              : current.copyGateSeconds,
+            body.copyGateSeconds,
 
           directLink:
-            body.directLink !==
-            undefined
-              ? clean(
-                  body.directLink
-                )
-              : current.directLink
+            body.directLink
         });
 
+      restartAutomation();
+
       res.json(
-        saved
+        settings
       );
+
     } catch (error) {
-      console.error(
-        "[SETTINGS]",
-        error
-      );
 
       res.status(500).json({
         error:
@@ -3659,19 +1122,24 @@ app.post(
   }
 );
 
+
 /* =========================================================
-   ADMIN ADS
+   ADS
 ========================================================= */
 
 app.get(
   "/api/admin/ads",
   admin,
   async (req, res) => {
+
     try {
+
       res.json(
         await getAds()
       );
+
     } catch (error) {
+
       res.status(500).json({
         error:
           error.message
@@ -3679,28 +1147,22 @@ app.get(
     }
   }
 );
+
 
 app.post(
   "/api/admin/ads",
   admin,
   async (req, res) => {
-    try {
-      const ads =
-        req.body || {};
 
-      const saved =
-        await saveAds(
-          ads
-        );
+    try {
 
       res.json(
-        saved
+        await saveAds(
+          req.body || {}
+        )
       );
+
     } catch (error) {
-      console.error(
-        "[ADS]",
-        error
-      );
 
       res.status(500).json({
         error:
@@ -3710,29 +1172,1884 @@ app.post(
   }
 );
 
+
+app.get(
+  "/api/ads",
+  async (req, res) => {
+
+    try {
+
+      res.set(
+        "Cache-Control",
+        "no-store"
+      );
+
+      res.json(
+        await getAds()
+      );
+
+    } catch (error) {
+
+      res.status(500).json({
+        error:
+          error.message
+      });
+    }
+  }
+);
+
+
 /* =========================================================
-   MANUAL AUTO-POST / COLLECT
+   GENERIC CUSTOM API
+========================================================= */
+
+async function customApiRequest(
+  provider,
+  variables = {}
+) {
+
+  const config =
+    provider.config || {};
+
+  if (
+    !config.endpoint
+  ) {
+    throw new Error(
+      "Custom API endpoint missing."
+    );
+  }
+
+  let url =
+    replaceTemplate(
+      config.endpoint,
+      variables
+    );
+
+  const method =
+    String(
+      config.method ||
+      "GET"
+    ).toUpperCase();
+
+  let headers = {
+    Accept:
+      "application/json"
+  };
+
+  const customHeaders =
+    replaceTemplate(
+      config.headers || {},
+      variables
+    );
+
+  Object.assign(
+    headers,
+    customHeaders
+  );
+
+  const apiKey =
+    provider.apiKey ||
+    "";
+
+  const authType =
+    String(
+      config.authType ||
+      "bearer"
+    ).toLowerCase();
+
+  if (
+    apiKey &&
+    authType === "bearer"
+  ) {
+    headers.Authorization =
+      `Bearer ${apiKey}`;
+  }
+
+  if (
+    apiKey &&
+    (
+      authType ===
+        "x-api-key" ||
+      authType ===
+        "x_api_key"
+    )
+  ) {
+    headers["X-API-Key"] =
+      apiKey;
+  }
+
+  let query =
+    replaceTemplate(
+      config.query || {},
+      variables
+    );
+
+  if (
+    !query ||
+    typeof query !==
+      "object"
+  ) {
+    query = {};
+  }
+
+  if (
+    apiKey &&
+    authType === "query"
+  ) {
+    query[
+      config.apiKeyQueryName ||
+      "api_key"
+    ] = apiKey;
+  }
+
+  url =
+    appendQuery(
+      url,
+      query
+    );
+
+  const options = {
+    method,
+    headers,
+    signal:
+      AbortSignal.timeout(
+        30000
+      )
+  };
+
+  if (
+    method !== "GET" &&
+    method !== "HEAD"
+  ) {
+
+    const body =
+      replaceTemplate(
+        config.body || {},
+        variables
+      );
+
+    headers["Content-Type"] =
+      headers["Content-Type"] ||
+      "application/json";
+
+    options.body =
+      typeof body ===
+        "string"
+        ? body
+        : JSON.stringify(
+            body
+          );
+  }
+
+  return fetchJson(
+    url,
+    options
+  );
+}
+
+
+/* =========================================================
+   CUSTOM TRENDING
+========================================================= */
+
+async function customTrending(
+  provider,
+  query = ""
+) {
+
+  const data =
+    await customApiRequest(
+      provider,
+      {
+        query,
+        topic: query
+      }
+    );
+
+  let result =
+    provider.config?.responsePath
+      ? getPathValue(
+          data,
+          provider.config
+            .responsePath
+        )
+      : data;
+
+  if (
+    !Array.isArray(result)
+  ) {
+
+    result =
+      Array.isArray(
+        data?.results
+      )
+        ? data.results
+        : Array.isArray(
+            data?.data
+          )
+          ? data.data
+          : [data];
+  }
+
+  const topicPath =
+    provider.config
+      ?.topicPath ||
+    "title";
+
+  return result
+    .map(item => {
+
+      if (
+        typeof item ===
+        "string"
+      ) {
+        return {
+          title: item,
+          topic: item
+        };
+      }
+
+      const title =
+        getPathValue(
+          item,
+          topicPath
+        ) ||
+        item?.title ||
+        item?.name ||
+        item?.topic ||
+        item?.query;
+
+      if (!title) {
+        return null;
+      }
+
+      return {
+        title:
+          String(title)
+            .trim(),
+
+        topic:
+          String(title)
+            .trim(),
+
+        raw:
+          item
+      };
+
+    })
+    .filter(Boolean);
+}
+
+
+/* =========================================================
+   CUSTOM PROMPT
+========================================================= */
+
+async function customPrompt(
+  provider,
+  topic
+) {
+
+  const data =
+    await customApiRequest(
+      provider,
+      {
+        topic,
+        query: topic,
+        prompt: topic
+      }
+    );
+
+  let result =
+    provider.config?.responsePath
+      ? getPathValue(
+          data,
+          provider.config
+            .responsePath
+        )
+      : data;
+
+  if (
+    Array.isArray(result)
+  ) {
+    result =
+      result[0];
+  }
+
+  const promptPath =
+    provider.config
+      ?.promptPath ||
+    "prompt";
+
+  const prompt =
+    getPathValue(
+      result,
+      promptPath
+    ) ||
+    result?.text ||
+    result?.content ||
+    data?.prompt ||
+    data?.text;
+
+  if (!prompt) {
+    throw new Error(
+      "Custom API prompt response not found."
+    );
+  }
+
+  const title =
+    result?.title ||
+    data?.title ||
+    `AI Visual Concept - ${topic}`;
+
+  return {
+    title:
+      String(title).trim(),
+
+    prompt:
+      String(prompt).trim(),
+
+    raw:
+      data
+  };
+}
+
+
+/* =========================================================
+   CUSTOM IMAGE
+========================================================= */
+
+async function customImage(
+  provider,
+  prompt
+) {
+
+  const data =
+    await customApiRequest(
+      provider,
+      {
+        prompt,
+        query: prompt,
+        topic: prompt
+      }
+    );
+
+  let result =
+    provider.config?.responsePath
+      ? getPathValue(
+          data,
+          provider.config
+            .responsePath
+        )
+      : data;
+
+  if (
+    Array.isArray(result)
+  ) {
+    result =
+      result[0];
+  }
+
+  const imagePath =
+    provider.config
+      ?.imagePath ||
+    "image";
+
+  const imageUrl =
+    getPathValue(
+      result,
+      imagePath
+    ) ||
+    result?.url ||
+    result?.image_url ||
+    result?.image ||
+    data?.url ||
+    data?.image_url;
+
+  if (!imageUrl) {
+    throw new Error(
+      "Custom API image URL not found."
+    );
+  }
+
+  return {
+    imageUrl:
+      String(imageUrl).trim(),
+
+    raw:
+      data
+  };
+}
+
+
+/* =========================================================
+   TRENDING API ADAPTERS
+========================================================= */
+
+async function newsData(
+  provider
+) {
+
+  if (!provider.apiKey) {
+    throw new Error(
+      "NewsData.io API key missing."
+    );
+  }
+
+  const url =
+    "https://newsdata.io/api/1/latest" +
+    `?apikey=${encodeURIComponent(
+      provider.apiKey
+    )}&language=en&size=10`;
+
+  const data =
+    await fetchJson(
+      url
+    );
+
+  return (
+    data.results || []
+  )
+    .map(
+      x => ({
+        title:
+          x.title,
+
+        topic:
+          x.title,
+
+        raw:
+          x
+      })
+    )
+    .filter(
+      x => x.title
+    );
+}
+
+
+async function gNews(
+  provider
+) {
+
+  if (!provider.apiKey) {
+    throw new Error(
+      "GNews API key missing."
+    );
+  }
+
+  const url =
+    "https://gnews.io/api/v4/top-headlines" +
+    `?token=${encodeURIComponent(
+      provider.apiKey
+    )}&lang=en&max=10`;
+
+  const data =
+    await fetchJson(
+      url
+    );
+
+  return (
+    data.articles || []
+  )
+    .map(
+      x => ({
+        title:
+          x.title,
+
+        topic:
+          x.title,
+
+        raw:
+          x
+      })
+    )
+    .filter(
+      x => x.title
+    );
+}
+
+
+async function reddit(
+  provider
+) {
+
+  const headers = {
+    "User-Agent":
+      "PromptForge/1.0"
+  };
+
+  if (
+    provider.apiKey
+  ) {
+    headers.Authorization =
+      `Bearer ${provider.apiKey}`;
+  }
+
+  const data =
+    await fetchJson(
+      "https://www.reddit.com/r/popular.json?limit=10",
+      {
+        headers
+      }
+    );
+
+  return (
+    data?.data?.children ||
+    []
+  )
+    .map(
+      x => ({
+        title:
+          x?.data?.title,
+
+        topic:
+          x?.data?.title,
+
+        raw:
+          x?.data
+      })
+    )
+    .filter(
+      x => x.title
+    );
+}
+
+
+async function youtube(
+  provider
+) {
+
+  if (!provider.apiKey) {
+    throw new Error(
+      "YouTube API key missing."
+    );
+  }
+
+  const url =
+    "https://www.googleapis.com/youtube/v3/videos" +
+    "?part=snippet&chart=mostPopular&regionCode=US&maxResults=10" +
+    `&key=${encodeURIComponent(
+      provider.apiKey
+    )}`;
+
+  const data =
+    await fetchJson(
+      url
+    );
+
+  return (
+    data.items || []
+  )
+    .map(
+      x => ({
+        title:
+          x?.snippet?.title,
+
+        topic:
+          x?.snippet?.title,
+
+        raw:
+          x
+      })
+    )
+    .filter(
+      x => x.title
+    );
+}
+
+
+async function xTwitter(
+  provider
+) {
+
+  if (!provider.apiKey) {
+    throw new Error(
+      "X/Twitter Bearer Token missing."
+    );
+  }
+
+  const data =
+    await fetchJson(
+      "https://api.x.com/2/trends/by/woeid/1",
+      {
+        headers: {
+          Authorization:
+            `Bearer ${provider.apiKey}`
+        }
+      }
+    );
+
+  const trends =
+    Array.isArray(data)
+      ? data
+      : data?.data ||
+        data?.trends ||
+        [];
+
+  return trends
+    .map(
+      x => ({
+        title:
+          x.name ||
+          x.trend_name,
+
+        topic:
+          x.name ||
+          x.trend_name,
+
+        raw:
+          x
+      })
+    )
+    .filter(
+      x => x.title
+    );
+}
+
+
+async function bluesky(
+  provider
+) {
+
+  const data =
+    await fetchJson(
+      "https://public.api.bsky.app/xrpc/app.bsky.feed.getFeed?feed=at%3A%2F%2Fdid%3Aplc%3Az72i7hdynmk6r22z27t6tv6y%2Fapp.bsky.feed.generator%2Fwhats-hot&limit=10"
+    );
+
+  return (
+    data.feed || []
+  )
+    .map(
+      x => ({
+        title:
+          x?.post?.record?.text,
+
+        topic:
+          x?.post?.record?.text,
+
+        raw:
+          x
+      })
+    )
+    .filter(
+      x => x.title
+    );
+}
+
+
+/* =========================================================
+   GEMINI
+========================================================= */
+
+async function geminiPrompt(
+  provider,
+  topic,
+  category
+) {
+
+  if (!provider.apiKey) {
+    throw new Error(
+      "Gemini API key missing."
+    );
+  }
+
+  const model =
+    provider.config?.model ||
+    "gemini-3.5-flash-lite";
+
+  const endpoint =
+    `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(
+      provider.apiKey
+    )}`;
+
+  const instruction = `
+Create one original premium AI visual concept.
+
+Topic:
+${topic}
+
+Category:
+${category}
+
+Return ONLY valid JSON:
+
+{
+  "title": "...",
+  "category": "...",
+  "prompt": "..."
+}
+
+The prompt must be a detailed image-generation prompt.
+
+Include:
+subject,
+composition,
+camera,
+lens,
+lighting,
+environment,
+materials,
+color grading,
+atmosphere,
+photorealism,
+fine details.
+
+Do not copy an existing artwork.
+Do not include copyrighted character names.
+`;
+
+  const data =
+    await fetchJson(
+      endpoint,
+      {
+        method:
+          "POST",
+
+        headers: {
+          "Content-Type":
+            "application/json"
+        },
+
+        body:
+          JSON.stringify({
+            contents: [
+              {
+                parts: [
+                  {
+                    text:
+                      instruction
+                  }
+                ]
+              }
+            ],
+
+            generationConfig: {
+              temperature:
+                0.9,
+
+              responseMimeType:
+                "application/json"
+            }
+          })
+      }
+    );
+
+  const text =
+    data?.candidates?.[0]
+      ?.content?.parts?.[0]
+      ?.text;
+
+  if (!text) {
+    throw new Error(
+      "Gemini returned no text."
+    );
+  }
+
+  let result;
+
+  try {
+    result =
+      JSON.parse(text);
+  } catch {
+
+    const cleaned =
+      text
+        .replace(
+          /^```json/i,
+          ""
+        )
+        .replace(
+          /^```/i,
+          ""
+        )
+        .replace(
+          /```$/i,
+          ""
+        )
+        .trim();
+
+    result =
+      JSON.parse(
+        cleaned
+      );
+  }
+
+  if (
+    !result.prompt
+  ) {
+    throw new Error(
+      "Gemini returned no prompt."
+    );
+  }
+
+  return {
+    title:
+      result.title ||
+      `AI Visual - ${topic}`,
+
+    category:
+      result.category ||
+      category,
+
+    prompt:
+      result.prompt
+  };
+}
+
+
+/* =========================================================
+   POLLINATIONS
+========================================================= */
+
+async function pollinationsImage(
+  provider,
+  prompt
+) {
+
+  const encoded =
+    encodeURIComponent(
+      prompt
+    );
+
+  const url =
+    `https://image.pollinations.ai/prompt/${encoded}` +
+    "?width=1024&height=1024&nologo=true";
+
+  const response =
+    await fetch(
+      url,
+      {
+        signal:
+          AbortSignal.timeout(
+            90000
+          )
+      }
+    );
+
+  if (
+    !response.ok
+  ) {
+    throw new Error(
+      `Pollinations HTTP ${response.status}`
+    );
+  }
+
+  const buffer =
+    Buffer.from(
+      await response.arrayBuffer()
+    );
+
+  return uploadImage(
+    buffer,
+    "pollinations"
+  );
+}
+
+
+/* =========================================================
+   HUGGING FACE
+========================================================= */
+
+async function huggingFaceImage(
+  provider,
+  prompt
+) {
+
+  if (!provider.apiKey) {
+    throw new Error(
+      "Hugging Face API key missing."
+    );
+  }
+
+  const model =
+    provider.config?.model ||
+    "black-forest-labs/FLUX.1-schnell";
+
+  const url =
+    `https://router.huggingface.co/hf-inference/models/${model}`;
+
+  const response =
+    await fetch(
+      url,
+      {
+        method:
+          "POST",
+
+        headers: {
+          Authorization:
+            `Bearer ${provider.apiKey}`,
+
+          "Content-Type":
+            "application/json"
+        },
+
+        body:
+          JSON.stringify({
+            inputs:
+              prompt
+          }),
+
+        signal:
+          AbortSignal.timeout(
+            120000
+          )
+      }
+    );
+
+  if (
+    !response.ok
+  ) {
+    throw new Error(
+      `Hugging Face HTTP ${response.status}`
+    );
+  }
+
+  const buffer =
+    Buffer.from(
+      await response.arrayBuffer()
+    );
+
+  return uploadImage(
+    buffer,
+    "huggingface"
+  );
+}
+
+
+/* =========================================================
+   CLOUDINARY UPLOAD
+========================================================= */
+
+async function uploadImage(
+  buffer,
+  folder
+) {
+
+  if (
+    !CLOUDINARY_ENABLED
+  ) {
+    throw new Error(
+      "Cloudinary is not configured."
+    );
+  }
+
+  return new Promise(
+    (
+      resolve,
+      reject
+    ) => {
+
+      const upload =
+        cloudinary.uploader
+          .upload_stream(
+            {
+              folder:
+                `promptforge/${folder}`,
+
+              resource_type:
+                "image"
+            },
+
+            (
+              error,
+              result
+            ) => {
+
+              if (error) {
+                reject(
+                  error
+                );
+                return;
+              }
+
+              resolve({
+                imageUrl:
+                  result.secure_url,
+
+                publicId:
+                  result.public_id
+              });
+
+            }
+          );
+
+      upload.end(
+        buffer
+      );
+
+    }
+  );
+}
+
+
+/* =========================================================
+   TREND PROVIDER ROTATION
+========================================================= */
+
+let trendIndex = 0;
+let promptIndex = 0;
+let photoIndex = 0;
+
+
+function nextProvider(
+  providers,
+  type
+) {
+
+  const enabled =
+    providers.filter(
+      p =>
+        p.enabled !== false
+    );
+
+  if (!enabled.length) {
+    throw new Error(
+      `No enabled ${type} provider.`
+    );
+  }
+
+  let index;
+
+  if (
+    type ===
+    "trending_search"
+  ) {
+    index =
+      trendIndex %
+      enabled.length;
+
+    trendIndex++;
+  }
+
+  else if (
+    type ===
+    "prompt_generate"
+  ) {
+    index =
+      promptIndex %
+      enabled.length;
+
+    promptIndex++;
+  }
+
+  else {
+    index =
+      photoIndex %
+      enabled.length;
+
+    photoIndex++;
+  }
+
+  return {
+    provider:
+      enabled[index],
+
+    index,
+
+    enabled
+  };
+}
+
+
+/* =========================================================
+   TRENDING PROVIDER CALL
+========================================================= */
+
+async function runTrendingProvider(
+  provider
+) {
+
+  const name =
+    clean(
+      provider.providerName
+    ).toLowerCase();
+
+
+  if (
+    name ===
+    "newsdata.io"
+  ) {
+    return newsData(
+      provider
+    );
+  }
+
+
+  if (
+    name ===
+    "gnews"
+  ) {
+    return gNews(
+      provider
+    );
+  }
+
+
+  if (
+    name ===
+    "reddit"
+  ) {
+    return reddit(
+      provider
+    );
+  }
+
+
+  if (
+    name ===
+    "youtube"
+  ) {
+    return youtube(
+      provider
+    );
+  }
+
+
+  if (
+    name ===
+      "x/twitter" ||
+    name ===
+      "x / twitter" ||
+    name === "twitter"
+  ) {
+    return xTwitter(
+      provider
+    );
+  }
+
+
+  if (
+    name ===
+    "bluesky"
+  ) {
+    return bluesky(
+      provider
+    );
+  }
+
+
+  if (
+    name ===
+    "custom"
+  ) {
+    return customTrending(
+      provider,
+      "trending"
+    );
+  }
+
+
+  /*
+   * Unknown provider with
+   * Custom configuration:
+   * treat it as Custom.
+   */
+
+  if (
+    provider.config?.endpoint
+  ) {
+    return customTrending(
+      provider,
+      "trending"
+    );
+  }
+
+
+  throw new Error(
+    `No adapter for ${provider.providerName}`
+  );
+}
+
+
+/* =========================================================
+   PROMPT PROVIDER CALL
+========================================================= */
+
+async function runPromptProvider(
+  provider,
+  topic,
+  category
+) {
+
+  const name =
+    clean(
+      provider.providerName
+    ).toLowerCase();
+
+
+  if (
+    name === "gemini" ||
+    name ===
+      "google gemini"
+  ) {
+    return geminiPrompt(
+      provider,
+      topic,
+      category
+    );
+  }
+
+
+  if (
+    name ===
+    "custom"
+  ) {
+    return customPrompt(
+      provider,
+      topic
+    );
+  }
+
+
+  if (
+    provider.config?.endpoint
+  ) {
+    return customPrompt(
+      provider,
+      topic
+    );
+  }
+
+
+  throw new Error(
+    `No prompt adapter for ${provider.providerName}`
+  );
+}
+
+
+/* =========================================================
+   IMAGE PROVIDER CALL
+========================================================= */
+
+async function runImageProvider(
+  provider,
+  prompt
+) {
+
+  const name =
+    clean(
+      provider.providerName
+    ).toLowerCase();
+
+
+  if (
+    name ===
+    "pollinations"
+  ) {
+    return pollinationsImage(
+      provider,
+      prompt
+    );
+  }
+
+
+  if (
+    name ===
+    "hugging face" ||
+    name ===
+    "huggingface"
+  ) {
+    return huggingFaceImage(
+      provider,
+      prompt
+    );
+  }
+
+
+  if (
+    name ===
+    "custom"
+  ) {
+    return customImage(
+      provider,
+      prompt
+    );
+  }
+
+
+  if (
+    provider.config?.endpoint
+  ) {
+    return customImage(
+      provider,
+      prompt
+    );
+  }
+
+
+  throw new Error(
+    `No image adapter for ${provider.providerName}`
+  );
+}
+
+
+/* =========================================================
+   PROVIDER FALLBACK
+========================================================= */
+
+async function tryProviders(
+  providers,
+  type,
+  runner
+) {
+
+  const enabled =
+    providers.filter(
+      p =>
+        p.enabled !== false
+    );
+
+  if (!enabled.length) {
+    throw new Error(
+      `No enabled ${type} APIs.`
+    );
+  }
+
+  let selected;
+
+  try {
+    selected =
+      nextProvider(
+        enabled,
+        type
+      );
+  } catch {
+    selected = {
+      provider:
+        enabled[0],
+      enabled
+    };
+  }
+
+
+  const ordered = [
+    selected.provider,
+
+    ...enabled.filter(
+      p =>
+        p.id !==
+        selected.provider.id
+    )
+  ];
+
+
+  let lastError;
+
+
+  for (
+    const provider
+    of ordered
+  ) {
+
+    try {
+
+      console.log(
+        `[API] ${type}: trying ${provider.providerName}`
+      );
+
+      const result =
+        await runner(
+          provider
+        );
+
+      console.log(
+        `[API] ${type}: success ${provider.providerName}`
+      );
+
+      return {
+        result,
+        provider
+      };
+
+    } catch (error) {
+
+      lastError =
+        error;
+
+      console.error(
+        `[API] ${type}: ${provider.providerName} failed: ${error.message}`
+      );
+    }
+  }
+
+
+  throw lastError ||
+    new Error(
+      `${type} failed`
+    );
+}
+
+
+/* =========================================================
+   CREATIVE CATEGORIES
+========================================================= */
+
+const CREATIVE_CATEGORIES = [
+
+  "Portrait Photography",
+  "Fashion Photography",
+  "Commercial Photography",
+  "Product Photography",
+  "Brand Design",
+  "Architecture",
+  "Interior Design",
+  "Travel Photography",
+  "Nature Photography",
+  "Cinematic Photography",
+  "Automotive",
+  "Food Photography",
+  "Editorial",
+  "Fantasy Art",
+  "Digital Art",
+  "Graphic Design",
+  "Lifestyle",
+  "Luxury",
+  "Minimalist",
+  "Surreal Art"
+
+];
+
+
+const CREATIVE_SEEDS = [
+
+  "luxury editorial portrait",
+
+  "cinematic street photography",
+
+  "futuristic architecture",
+
+  "premium fashion campaign",
+
+  "minimal product photography",
+
+  "dreamlike landscape",
+
+  "luxury automotive campaign",
+
+  "modern interior design",
+
+  "creative food photography",
+
+  "editorial lifestyle photography",
+
+  "surreal fine art portrait",
+
+  "premium brand campaign",
+
+  "travel destination photography",
+
+  "cinematic night scene",
+
+  "high-end beauty photography",
+
+  "futuristic product advertisement",
+
+  "artistic architecture photography",
+
+  "minimalist studio photography",
+
+  "fantasy cinematic environment",
+
+  "modern graphic design poster"
+
+];
+
+
+function randomItem(
+  list
+) {
+  return list[
+    Math.floor(
+      Math.random() *
+        list.length
+    )
+  ];
+}
+
+
+/* =========================================================
+   DUPLICATE CHECK
+========================================================= */
+
+function normalizeText(
+  value
+) {
+  return String(
+    value || ""
+  )
+    .toLowerCase()
+    .replace(
+      /\s+/g,
+      " "
+    )
+    .trim();
+}
+
+
+function duplicateExists(
+  posts,
+  title,
+  prompt
+) {
+
+  const titleKey =
+    normalizeText(
+      title
+    );
+
+  const promptKey =
+    normalizeText(
+      prompt
+    );
+
+  return posts.some(
+    post =>
+      normalizeText(
+        post.title
+      ) ===
+        titleKey ||
+      normalizeText(
+        post.prompt
+      ) ===
+        promptKey
+  );
+}
+
+
+/* =========================================================
+   AUTOMATIC POST
+========================================================= */
+
+async function createAutomaticPost() {
+
+  const providers =
+    await getProviders();
+
+
+  const trendProviders =
+    providers.filter(
+      p =>
+        p.category ===
+        "trending_search"
+    );
+
+
+  const promptProviders =
+    providers.filter(
+      p =>
+        p.category ===
+        "prompt_generate"
+    );
+
+
+  const photoProviders =
+    providers.filter(
+      p =>
+        p.category ===
+        "photo_generate"
+    );
+
+
+  console.log(
+    `[AUTO] Providers: trending=${trendProviders.length}, prompt=${promptProviders.length}, photo=${photoProviders.length}`
+  );
+
+
+  let trendTopic =
+    randomItem(
+      CREATIVE_SEEDS
+    );
+
+
+  /*
+   * Trending API is optional.
+   * If all trend APIs fail,
+   * creative seed is used.
+   */
+
+  if (
+    trendProviders.length
+  ) {
+
+    try {
+
+      const trend =
+        await tryProviders(
+          trendProviders,
+          "trending_search",
+          provider =>
+            runTrendingProvider(
+              provider
+            )
+        );
+
+      const items =
+        trend.result || [];
+
+      if (
+        items.length
+      ) {
+
+        const selected =
+          randomItem(
+            items
+          );
+
+        trendTopic =
+          selected.topic ||
+          selected.title ||
+          trendTopic;
+
+      }
+
+    } catch (error) {
+
+      console.warn(
+        `[AUTO] Trending failed, using creative seed: ${error.message}`
+      );
+
+    }
+
+  }
+
+
+  const category =
+    randomItem(
+      CREATIVE_CATEGORIES
+    );
+
+
+  console.log(
+    `[AUTO] Topic: ${trendTopic}`
+  );
+
+
+  /*
+   * PROMPT
+   */
+
+  if (
+    !promptProviders.length
+  ) {
+    throw new Error(
+      "No Prompt Generate API configured."
+    );
+  }
+
+
+  const promptResult =
+    await tryProviders(
+      promptProviders,
+      "prompt_generate",
+      provider =>
+        runPromptProvider(
+          provider,
+          trendTopic,
+          category
+        )
+    );
+
+
+  const visual =
+    promptResult.result;
+
+
+  /*
+   * IMAGE
+   */
+
+  if (
+    !photoProviders.length
+  ) {
+    throw new Error(
+      "No Photo Generate API configured."
+    );
+  }
+
+
+  const imageResult =
+    await tryProviders(
+      photoProviders,
+      "photo_generate",
+      provider =>
+        runImageProvider(
+          provider,
+          visual.prompt
+        )
+    );
+
+
+  const image =
+    imageResult.result;
+
+
+  /*
+   * DUPLICATE CHECK
+   */
+
+  const existing =
+    await getPrompts();
+
+
+  if (
+    duplicateExists(
+      existing,
+      visual.title,
+      visual.prompt
+    )
+  ) {
+
+    console.log(
+      "[AUTO] Duplicate detected. Skipping."
+    );
+
+    return {
+      added: false,
+      reason:
+        "duplicate"
+    };
+  }
+
+
+  /*
+   * SAVE
+   */
+
+  const item =
+    await addPrompt({
+
+      slug:
+        slugify(
+          visual.title
+        ) +
+        "-" +
+        Date.now()
+          .toString(36),
+
+      title:
+        uniqueTitle(
+          visual.title,
+          existing
+        ),
+
+      prompt:
+        visual.prompt,
+
+      category:
+        visual.category ||
+        category,
+
+      media:
+        "Image",
+
+      imageUrl:
+        image.imageUrl,
+
+      model:
+        promptResult.provider
+          .providerName,
+
+      source:
+        "AI Visual Inspiration"
+
+    });
+
+
+  console.log(
+    `[AUTO] Published: ${item.title}`
+  );
+
+  console.log(
+    `[AUTO] Prompt API: ${promptResult.provider.providerName}`
+  );
+
+  console.log(
+    `[AUTO] Image API: ${imageResult.provider.providerName}`
+  );
+
+
+  return {
+    added: true,
+
+    post:
+      item,
+
+    trendProvider:
+      null,
+
+    promptProvider:
+      promptResult.provider
+        .providerName,
+
+    imageProvider:
+      imageResult.provider
+        .providerName
+  };
+}
+
+
+/* =========================================================
+   ADMIN RUN NOW
 ========================================================= */
 
 app.post(
   "/api/admin/collect",
   admin,
   async (req, res) => {
-    try {
-      const result =
-        await createAutomaticPost();
 
-      res.json(
-        result
-      );
+    try {
+
+      const settings =
+        await getSettings();
+
+      const count =
+        Math.max(
+          1,
+          Number(
+            settings.postsPerRun
+          ) || 1
+        );
+
+      const results = [];
+
+      for (
+        let i = 0;
+        i < count;
+        i++
+      ) {
+
+        try {
+
+          results.push(
+            await createAutomaticPost()
+          );
+
+        } catch (error) {
+
+          results.push({
+            added: false,
+            error:
+              error.message
+          });
+
+        }
+
+      }
+
+      res.json({
+        ok: true,
+        results
+      });
+
     } catch (error) {
+
       console.error(
-        "[MANUAL AUTO POST]",
+        "[ADMIN RUN]",
         error
       );
 
       res.status(500).json({
-        ok: false,
         error:
           error.message
       });
@@ -3740,193 +3057,239 @@ app.post(
   }
 );
 
+
 /* =========================================================
-   AUTOMATIC POST SCHEDULER
+   AUTOMATION
 ========================================================= */
 
-let schedulerRunning =
-  false;
+let automationTimer =
+  null;
 
-async function runScheduler() {
-  if (schedulerRunning) {
-    return;
-  }
 
-  schedulerRunning = true;
+async function automationTick() {
 
   try {
+
     const settings =
       await getSettings();
 
     if (
-      settings.autoPost ===
-      false
-    ) {
-      return;
-    }
-
-    const interval =
-      Math.max(
-        1,
-        safeNumber(
-          settings.postIntervalMinutes,
-          60
-        )
-      );
-
-    const providers =
-      await getProviders();
-
-    const hasTrending =
-      providersFor(
-        providers,
-        "trending_search"
-      ).length > 0;
-
-    const hasPrompt =
-      providersFor(
-        providers,
-        "prompt_generate"
-      ).length > 0;
-
-    const hasPhoto =
-      providersFor(
-        providers,
-        "photo_generate"
-      ).length > 0;
-
-    if (
-      !hasPrompt ||
-      !hasPhoto
+      settings.autoPost !== true
     ) {
       console.log(
-        "[AUTO] Waiting: Prompt Generate and Photo Generate APIs are required."
+        "[AUTO] Automatic posting disabled."
       );
 
       return;
     }
 
-    console.log(
-      `[AUTO] Automatic posting cycle started. Trending API: ${hasTrending ? "yes" : "creative seed"}`
-    );
 
     const count =
       Math.max(
         1,
-        Math.min(
-          20,
-          safeNumber(
-            settings.postsPerRun,
-            1
-          )
-        )
+        Number(
+          settings.postsPerRun
+        ) || 1
       );
+
+
+    console.log(
+      `[AUTO] Starting ${count} automatic post(s).`
+    );
+
 
     for (
       let i = 0;
       i < count;
       i++
     ) {
+
       try {
+
         await createAutomaticPost();
+
       } catch (error) {
+
         console.error(
           "[AUTO ERROR]",
-          error.message
+          error
         );
+
       }
+
     }
 
-    console.log(
-      `[AUTO] Next scheduled cycle target: ${interval} minute(s).`
-    );
   } catch (error) {
+
     console.error(
-      "[SCHEDULER]",
-      error.message
+      "[AUTO SETTINGS ERROR]",
+      error
     );
-  } finally {
-    schedulerRunning =
-      false;
+
   }
+
 }
 
-/*
-  Check every minute.
-  The actual interval is read from
-  Supabase settings.
 
-  This means admin can change:
-  60 minutes -> 30 minutes -> 10 minutes
-  without changing server.js.
-*/
+function restartAutomation() {
 
-let lastAutomaticRun = 0;
+  if (
+    automationTimer
+  ) {
+    clearInterval(
+      automationTimer
+    );
 
-setInterval(
-  async () => {
-    try {
-      const settings =
-        await getSettings();
+    automationTimer =
+      null;
+  }
 
-      if (
-        settings.autoPost ===
-        false
-      ) {
-        return;
+
+  getSettings()
+    .then(
+      settings => {
+
+        const minutes =
+          Math.max(
+            1,
+            Number(
+              settings.postIntervalMinutes
+            ) || 60
+          );
+
+
+        automationTimer =
+          setInterval(
+            automationTick,
+            minutes *
+              60 *
+              1000
+          );
+
+
+        console.log(
+          `Automatic posting scheduled every ${minutes} minute(s).`
+        );
+
       }
+    )
+    .catch(
+      error =>
+        console.error(
+          "Automation setup:",
+          error
+        )
+    );
 
-      const intervalMs =
-        Math.max(
-          1,
-          safeNumber(
-            settings.postIntervalMinutes,
-            60
-          )
-        ) *
-        60 *
-        1000;
+}
 
-      if (
-        Date.now() -
-          lastAutomaticRun <
-        intervalMs
-      ) {
-        return;
-      }
 
-      lastAutomaticRun =
-        Date.now();
+restartAutomation();
 
-      await runScheduler();
-    } catch (error) {
-      console.error(
-        "[AUTO TIMER]",
-        error.message
-      );
-    }
-  },
-  60 * 1000
-);
 
 /* =========================================================
-   HEALTH
+   RSS
 ========================================================= */
 
+function xmlEscape(
+  value
+) {
+  return String(
+    value || ""
+  )
+    .replace(
+      /&/g,
+      "&amp;"
+    )
+    .replace(
+      /</g,
+      "&lt;"
+    )
+    .replace(
+      />/g,
+      "&gt;"
+    )
+    .replace(
+      /"/g,
+      "&quot;"
+    )
+    .replace(
+      /'/g,
+      "&apos;"
+    );
+}
+
+
 app.get(
-  "/health",
+  "/rss.xml",
   async (req, res) => {
-    res.json({
-      ok: true,
-      database:
-        "Supabase PostgreSQL",
-      cloudinary:
-        cloudinaryEnabled,
-      time:
-        new Date().toISOString()
-    });
+
+    try {
+
+      const prompts =
+        await getPrompts();
+
+      const base =
+        (
+          process.env.SITE_URL ||
+          `${req.protocol}://${req.get("host")}`
+        ).replace(
+          /\/$/,
+          ""
+        );
+
+
+      const items =
+        prompts
+          .slice(0, 50)
+          .map(
+            p =>
+              `
+<item>
+<title>${xmlEscape(
+                p.title
+              )}</title>
+<link>${xmlEscape(
+                `${base}/p/${p.slug}`
+              )}</link>
+<description>${xmlEscape(
+                p.prompt
+              )}</description>
+</item>
+`
+          )
+          .join("\n");
+
+
+      res
+        .type(
+          "application/rss+xml"
+        )
+        .send(
+          `<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0">
+<channel>
+<title>PromptForge</title>
+<link>${xmlEscape(
+            base
+          )}</link>
+<description>AI Visual Prompts</description>
+${items}
+</channel>
+</rss>`
+        );
+
+    } catch (error) {
+
+      res.status(500).send(
+        "RSS error"
+      );
+
+    }
+
   }
 );
+
 
 /* =========================================================
    404 API
@@ -3934,21 +3297,24 @@ app.get(
 
 app.use(
   "/api",
-  (req, res) => {
-    res.status(404).json({
-      error:
-        "API endpoint not found"
-    });
-  }
+  (req, res) =>
+    res
+      .status(404)
+      .json({
+        error:
+          "API route not found"
+      })
 );
 
+
 /* =========================================================
-   FRONTEND FALLBACK
+   FRONTEND
 ========================================================= */
 
 app.get(
   "*splat",
   (req, res) => {
+
     res.sendFile(
       path.join(
         __dirname,
@@ -3956,8 +3322,10 @@ app.get(
         "index.html"
       )
     );
+
   }
 );
+
 
 /* =========================================================
    START
@@ -3966,32 +3334,13 @@ app.get(
 app.listen(
   PORT,
   () => {
-    console.log(
-      "=========================================="
-    );
-
-    console.log(
-      "PromptForge server started"
-    );
-
-    console.log(
-      `Port: ${PORT}`
-    );
 
     console.log(
       "Database: Supabase PostgreSQL"
     );
 
     console.log(
-      `Cloudinary: ${
-        cloudinaryEnabled
-          ? "enabled"
-          : "disabled"
-      }`
-    );
-
-    console.log(
-      "API categories:"
+      "3 API categories enabled:"
     );
 
     console.log(
@@ -4003,23 +3352,20 @@ app.listen(
     );
 
     console.log(
-      "3. Photo / Image Generate"
+      "3. Image / Photo Generate"
     );
 
-    console.log(
-      "Custom API: enabled"
-    );
+    if (
+      CLOUDINARY_ENABLED
+    ) {
+      console.log(
+        "Cloudinary storage enabled."
+      );
+    }
 
     console.log(
-      "Unlimited API rotation: enabled"
+      `PromptForge running on port ${PORT}`
     );
 
-    console.log(
-      "Automatic fallback: enabled"
-    );
-
-    console.log(
-      "=========================================="
-    );
   }
 );
