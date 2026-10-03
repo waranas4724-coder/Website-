@@ -1,6 +1,7 @@
 require("dotenv").config();
 
 const { createClient } = require("@supabase/supabase-js");
+const crypto = require("crypto");
 
 const SUPABASE_URL = process.env.SUPABASE_URL;
 
@@ -161,6 +162,7 @@ async function getPromptBySlug(slug) {
 
 async function addPrompt(prompt = {}) {
   const row = {
+    id: crypto.randomUUID(),
     slug:
       clean(prompt.slug),
 
@@ -357,6 +359,7 @@ async function addProvider(
       : {};
 
   const row = {
+    id: crypto.randomUUID(),
     category:
       clean(provider.category),
 
