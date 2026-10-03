@@ -173,39 +173,37 @@ async function allProviders() {
 }
 
 async function providersFor(category) {
-  const wanted =
-    normalizeCategory(category);
+  const wanted = normalizeCategory(category);
+  const providers = await allProviders();
 
-  const providers =
-    await allProviders();
-
-  return providers.filter(p => {
-    if (
-      p.category !== wanted ||
-      !p.enabled ||
-      !p.providerName
-    ) {
+  const enabled = providers.filter(p => {
+    if (p.category !== wanted || !p.enabled || !p.providerName) {
       return false;
     }
 
-    if (p.apiKey) {
-      return true;
-    }
+    if (p.apiKey) return true;
 
-    const name =
-      clean(p.providerName)
-        .toLowerCase();
+    const name = clean(p.providerName).toLowerCase();
 
     return (
       wanted === 'trending_search' &&
-      [
-        'bluesky',
-        'bluesky public',
-        'reddit public',
-        'reddit (public)'
-      ].includes(name)
+      ['bluesky', 'bluesky public', 'reddit public', 'reddit (public)'].includes(name)
     );
   });
+
+  // Same provider accidentally added more than once = use only once.
+  const unique = new Map();
+
+  for (const provider of enabled) {
+    const key =
+      `${wanted}::${clean(provider.providerName).toLowerCase()}`;
+
+    if (!unique.has(key)) {
+      unique.set(key, provider);
+    }
+  }
+
+  return Array.from(unique.values());
 }
 
 function providerOrder(
@@ -1013,7 +1011,6 @@ Create one original visual concept.
     model
   };
 }
-
 /* =========================================================
    PROMPT PROVIDER ROTATION
 ========================================================= */
@@ -1310,8 +1307,10 @@ async function generateImage(
 
       return {
         buffer,
+
         provider:
           provider.providerName,
+
         model
       };
 
@@ -1549,6 +1548,7 @@ async function runAutomaticPosting() {
 
       results.push({
         ok: false,
+
         error:
           error.message
       });
@@ -1798,7 +1798,6 @@ app.get(
     }
   }
 );
-
 /* =========================================================
    ADMIN PROMPTS
 ========================================================= */
@@ -1936,6 +1935,7 @@ app.delete(
     }
   }
 );
+
 
 /* =========================================================
    ADMIN API PROVIDERS
@@ -2096,6 +2096,7 @@ app.delete(
   }
 );
 
+
 /* =========================================================
    SETTINGS
 ========================================================= */
@@ -2203,6 +2204,7 @@ app.post(
   }
 );
 
+
 /* =========================================================
    RUN NOW
 ========================================================= */
@@ -2263,6 +2265,7 @@ app.post(
   }
 );
 
+
 /* =========================================================
    ADMIN ADS
 ========================================================= */
@@ -2310,92 +2313,609 @@ app.post(
   }
 );
 
+
 /* =========================================================
    SCHEDULER
 ========================================================= */
 
-let autoTimer =
-  null;
+let autoTimer = null;
+let schedulerStarting = false;
 
-async function startScheduler() {
-  if (autoTimer) {
-    clearInterval(
-      autoTimer
+async function runScheduledPost() {
+  if (autoRunning) {
+    console.log(
+      '[AUTO] Previous automatic run is still running. Skipping this cycle.'
     );
+
+    return;
   }
 
-  const settings =
-    await getSettings();
+  autoRunning = true;
 
-  const minutes =
-    Math.max(
-      1,
-      Number(
-        settings?.postIntervalMinutes ||
-        60
-      )
+  try {
+    const settings =
+      await getSettings();
+
+    if (!settings?.autoPost) {
+      console.log(
+        '[AUTO] Automatic posting is disabled.'
+      );
+
+      return;
+    }
+
+    console.log(
+      '[AUTO] Scheduled run started.'
     );
 
-  console.log(
-    `Automatic posting scheduled every ${minutes} minute(s).`
-  );
+    const result =
+      await runAutomaticPosting();
 
-  autoTimer =
-    setInterval(
-      async () => {
-        if (autoRunning) {
-          console.log(
-            '[AUTO] Previous run is still running.'
-          );
-
-          return;
-        }
-
-        try {
-          const current =
-            await getSettings();
-
-          if (
-            !current?.autoPost
-          ) {
-            return;
-          }
-
-          autoRunning =
-            true;
-
-          console.log(
-            '[AUTO] Scheduled run started.'
-          );
-
-          const result =
-            await runAutomaticPosting();
-
-          console.log(
-            '[AUTO] Scheduled result:',
-            JSON.stringify(
-              result
-            )
-          );
-
-        } catch (error) {
-          console.error(
-            '[AUTO ERROR] Scheduled run:',
-            error.message
-          );
-
-        } finally {
-          autoRunning =
-            false;
-        }
-      },
-
-      minutes *
-        60 *
-        1000
+    console.log(
+      `[AUTO] Scheduled run finished: added=${
+        result.added || 0
+      }`
     );
+
+  } catch (error) {
+    console.error(
+      '[AUTO ERROR] Scheduled run:',
+      error?.message ||
+      error
+    );
+
+  } finally {
+    autoRunning =
+      false;
+  }
 }
 
+async function startScheduler() {
+  if (schedulerStarting) {
+    console.log(
+      '[AUTO] Scheduler start already in progress.'
+    );
+
+    return;
+  }
+
+  schedulerStarting = true;
+
+  try {
+    if (autoTimer) {
+      clearInterval(
+        autoTimer
+      );
+
+      autoTimer = null;
+    }
+
+    const settings =
+      await getSettings();
+
+    const minutes =
+      Math.max(
+        1,
+        Number(
+          settings?.postIntervalMinutes ||
+          60
+        )
+      );
+
+    console.log(
+      `Automatic posting scheduled every ${minutes} minute(s).`
+    );
+
+    autoTimer =
+      setInterval(
+        () => {
+          runScheduledPost();
+        },
+        minutes * 60 * 1000
+      );
+
+  } catch (error) {
+    console.error(
+      '[AUTO ERROR] Scheduler start:',
+      error?.message ||
+      error
+    );
+
+  } finally {
+    schedulerStarting =
+      false;
+  }
+}
+/* =========================================================
+   HEALTH / STATUS
+========================================================= */
+
+app.get(
+  '/api/health',
+  async (req, res) => {
+    try {
+      const providers =
+        await allProviders();
+
+      const settings =
+        await getSettings();
+
+      res.json({
+        ok: true,
+
+        service:
+          'PromptForge',
+
+        autoPost:
+          !!settings?.autoPost,
+
+        providers: {
+          trending:
+            providers.filter(
+              p =>
+                p.category ===
+                'trending_search' &&
+                p.enabled
+            ).length,
+
+          prompt:
+            providers.filter(
+              p =>
+                p.category ===
+                'prompt_generate' &&
+                p.enabled
+            ).length,
+
+          photo:
+            providers.filter(
+              p =>
+                p.category ===
+                'photo_generate' &&
+                p.enabled
+            ).length
+        },
+
+        scheduler:
+          !!autoTimer,
+
+        autoRunning:
+          !!autoRunning,
+
+        time:
+          new Date().toISOString()
+      });
+
+    } catch (error) {
+      res
+        .status(500)
+        .json({
+          ok: false,
+
+          error:
+            error.message
+        });
+    }
+  }
+);
+
+
+/* =========================================================
+   MANUAL PUBLISH
+========================================================= */
+
+app.post(
+  '/api/admin/publish',
+  requireAdmin,
+  async (req, res) => {
+    try {
+      const b =
+        req.body || {};
+
+      const title =
+        clean(
+          b.title,
+          140
+        );
+
+      const prompt =
+        clean(
+          b.prompt,
+          10000
+        );
+
+      const imageUrl =
+        clean(
+          b.imageUrl,
+          5000
+        );
+
+      if (!title || !prompt) {
+        return res
+          .status(400)
+          .json({
+            error:
+              'Title and prompt are required.'
+          });
+      }
+
+      const existing =
+        await getPrompts();
+
+      const finalTitle =
+        uniqueTitle(
+          title,
+          existing
+        );
+
+      const item =
+        await addPrompt({
+          id:
+            crypto.randomUUID(),
+
+          slug:
+            makeSlug(
+              finalTitle
+            ),
+
+          title:
+            finalTitle,
+
+          prompt,
+
+          category:
+            clean(
+              b.category,
+              100
+            ) ||
+            'Creative Art',
+
+          media:
+            'Image',
+
+          imageUrl,
+
+          model:
+            clean(
+              b.model,
+              100
+            ) ||
+            'Manual',
+
+          source:
+            'Manual',
+
+          publishedAt:
+            new Date()
+              .toISOString()
+        });
+
+      res.json({
+        ok: true,
+
+        item
+      });
+
+    } catch (error) {
+      console.error(
+        '[ADMIN ERROR] Publish:',
+        error
+      );
+
+      res
+        .status(500)
+        .json({
+          error:
+            error.message
+        });
+    }
+  }
+);
+
+
+/* =========================================================
+   COPY GATE VALIDATION
+========================================================= */
+
+app.post(
+  '/api/copy/verify',
+  async (req, res) => {
+    try {
+      const settings =
+        await getSettings();
+
+      const seconds =
+        Math.max(
+          0,
+          Number(
+            settings?.copyGateSeconds ??
+            10
+          )
+        );
+
+      res.json({
+        ok: true,
+
+        copyGateSeconds:
+          seconds,
+
+        directLink:
+          clean(
+            settings?.directLink ||
+            ''
+          )
+      });
+
+    } catch (error) {
+      res
+        .status(500)
+        .json({
+          ok: false,
+
+          error:
+            error.message
+        });
+    }
+  }
+);
+
+
+/* =========================================================
+   ROOT / FALLBACK
+========================================================= */
+
+app.get(
+  '/',
+  (req, res) => {
+    res.sendFile(
+      path.join(
+        __dirname,
+        'public',
+        'index.html'
+      )
+    );
+  }
+);
+
+
+/* =========================================================
+   404
+========================================================= */
+
+app.use(
+  (req, res) => {
+    if (
+      req.path.startsWith(
+        '/api/'
+      )
+    ) {
+      return res
+        .status(404)
+        .json({
+          error:
+            'API route not found.'
+        });
+    }
+
+    return res
+      .status(404)
+      .send(
+        'Page not found.'
+      );
+  }
+);
+
+
+/* =========================================================
+   ERROR HANDLER
+========================================================= */
+
+app.use(
+  (
+    error,
+    req,
+    res,
+    next
+  ) => {
+    console.error(
+      '[SERVER ERROR]',
+      error
+    );
+
+    if (
+      res.headersSent
+    ) {
+      return next(
+        error
+      );
+    }
+
+    res
+      .status(
+        Number(
+          error?.status
+        ) || 500
+      )
+      .json({
+        error:
+          error?.message ||
+          'Internal server error.'
+      });
+  }
+);
+
+
+/* =========================================================
+   CREATIVE FALLBACK TOPICS
+========================================================= */
+
+const CREATIVE_SEEDS = [
+  'cinematic luxury portrait photography',
+  'futuristic architecture at blue hour',
+  'premium automotive campaign photography',
+  'minimalist fashion editorial',
+  'dramatic travel landscape photography',
+  'luxury product advertising photography',
+  'cinematic urban night photography',
+  'modern interior design editorial',
+  'surreal conceptual photography',
+  'high-end food photography',
+  'nature photography with atmospheric light',
+  'creative commercial campaign',
+  'editorial street photography',
+  'premium lifestyle campaign',
+  'fantasy cinematic environment'
+];
+
+
+/* =========================================================
+   SERVER START
+========================================================= */
+
+async function boot() {
+  try {
+    /*
+     * Test database initialization.
+     * getSettings() also creates the default
+     * settings row when it does not exist.
+     */
+    await getSettings();
+
+    /*
+     * Initialize Cloudinary configuration
+     * when environment variables exist.
+     */
+    if (cloudinaryReady()) {
+      configureCloudinary();
+
+      console.log(
+        '[CLOUDINARY] Configuration loaded.'
+      );
+    } else {
+      console.warn(
+        '[CLOUDINARY] Environment variables are missing.'
+      );
+    }
+
+    /*
+     * Start HTTP server.
+     */
+    app.listen(
+      PORT,
+      () => {
+        console.log(
+          `PromptForge server running on port ${PORT}`
+        );
+
+        console.log(
+          `Environment: ${
+            process.env.NODE_ENV ||
+            'production'
+          }`
+        );
+
+        /*
+         * Start exactly one scheduler.
+         */
+        startScheduler()
+          .catch(
+            error => {
+              console.error(
+                '[AUTO ERROR] Initial scheduler:',
+                error?.message ||
+                error
+              );
+            }
+          );
+      }
+    );
+
+  } catch (error) {
+    console.error(
+      '[FATAL] Server boot failed:',
+      error
+    );
+
+    process.exit(
+      1
+    );
+  }
+}
+
+
+/* =========================================================
+   PROCESS SAFETY
+========================================================= */
+
+process.on(
+  'unhandledRejection',
+  error => {
+    console.error(
+      '[PROCESS] Unhandled rejection:',
+      error
+    );
+  }
+);
+
+process.on(
+  'uncaughtException',
+  error => {
+    console.error(
+      '[PROCESS] Uncaught exception:',
+      error
+    );
+  }
+);
+
+process.on(
+  'SIGTERM',
+  () => {
+    console.log(
+      '[PROCESS] SIGTERM received.'
+    );
+
+    if (autoTimer) {
+      clearInterval(
+        autoTimer
+      );
+
+      autoTimer =
+        null;
+    }
+
+    process.exit(
+      0
+    );
+  }
+);
+
+process.on(
+  'SIGINT',
+  () => {
+    console.log(
+      '[PROCESS] SIGINT received.'
+    );
+
+    if (autoTimer) {
+      clearInterval(
+        autoTimer
+      );
+
+      autoTimer =
+        null;
+    }
+
+    process.exit(
+      0
+    );
+  }
+);
+
+
+/* =========================================================
+   START
+========================================================= */
+
+boot();
 /* =========================================================
    ROUTES
 ========================================================= */
@@ -2435,6 +2955,7 @@ app.get(
       )
     )
 );
+
 
 /* =========================================================
    BOOT
