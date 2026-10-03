@@ -5,6 +5,7 @@ const session = require('express-session');
 const path = require('path');
 const crypto = require('crypto');
 const cloudinary = require('cloudinary').v2;
+const multer = require('multer');
 
 const {
   getPrompts,
@@ -23,6 +24,23 @@ const {
 
 const app = express();
 const PORT = Number(process.env.PORT || 3000);
+
+// Direct gallery uploads from phones/tablets. Files stay in memory only
+// and are immediately uploaded to Cloudinary, so Render's local disk is
+// never used for permanent media storage.
+const galleryUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: {
+    fileSize: 10 * 1024 * 1024
+  },
+  fileFilter: (req, file, cb) => {
+    if (String(file.mimetype || '').startsWith('image/')) {
+      return cb(null, true);
+    }
+
+    return cb(new Error('Only image files are allowed.'));
+  }
+});
 
 app.set('trust proxy', 1);
 app.disable('x-powered-by');
@@ -2516,6 +2534,74 @@ app.get(
   }
 );
 
+
+/* =========================================================
+   DIRECT GALLERY IMAGE UPLOAD
+========================================================= */
+
+app.post(
+  '/api/admin/upload-image',
+  requireAdmin,
+  (req, res) => {
+    galleryUpload.single('image')(req, res, async error => {
+      try {
+        if (error) {
+          return res.status(400).json({
+            error: error.code === 'LIMIT_FILE_SIZE'
+              ? 'Image is too large. Maximum size is 10 MB.'
+              : error.message
+          });
+        }
+
+        if (!req.file?.buffer) {
+          return res.status(400).json({
+            error: 'Please select an image from your gallery.'
+          });
+        }
+
+        if (!cloudinaryReady()) {
+          return res.status(503).json({
+            error: 'Cloudinary is not configured on the server.'
+          });
+        }
+
+        const title =
+          clean(req.body?.title, 140) ||
+          clean(
+            path.parse(req.file.originalname || 'manual-image').name,
+            140
+          ) ||
+          'Manual Image';
+
+        const uploaded =
+          await uploadToCloudinary(
+            req.file.buffer,
+            title
+          );
+
+        return res.json({
+          ok: true,
+          url: uploaded.secure_url,
+          secureUrl: uploaded.secure_url,
+          publicId: uploaded.public_id,
+          width: uploaded.width,
+          height: uploaded.height,
+          format: uploaded.format,
+          bytes: uploaded.bytes
+        });
+      } catch (error) {
+        console.error(
+          '[ADMIN ERROR] Gallery upload:',
+          error
+        );
+
+        return res.status(500).json({
+          error: error.message || 'Image upload failed.'
+        });
+      }
+    });
+  }
+);
 
 /* =========================================================
    MANUAL PUBLISH
