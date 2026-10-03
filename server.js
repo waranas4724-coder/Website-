@@ -13,6 +13,7 @@ const {
   deletePrompt,
   getProviders,
   addProvider,
+  updateProvider,
   deleteProvider,
   getSettings,
   saveSettings,
@@ -187,7 +188,7 @@ async function providersFor(category) {
 
     return (
       wanted === 'trending_search' &&
-      ['bluesky', 'bluesky public', 'reddit public', 'reddit (public)'].includes(name)
+      ['bluesky', 'bluesky public', 'reddit', 'reddit api', 'reddit public', 'reddit (public)'].includes(name)
     );
   });
 
@@ -2072,6 +2073,29 @@ app.post(
   }
 );
 
+app.patch(
+  '/api/admin/providers/:id',
+  requireAdmin,
+  async (req, res) => {
+    try {
+      const b = req.body || {};
+      const updated = await updateProvider(
+        req.params.id,
+        {
+          enabled: b.enabled,
+          providerName: b.providerName || b.provider_name,
+          apiKey: b.apiKey || b.api_key,
+          config: b.config
+        }
+      );
+
+      res.json(normalizeProvider(updated));
+    } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
+  }
+);
+
 app.delete(
   '/api/admin/providers/:id',
   requireAdmin,
@@ -2187,11 +2211,18 @@ app.post(
           )
       };
 
-      res.json(
-        await saveSettings(
-          next
-        )
+      const saved = await saveSettings(next);
+
+      // Apply the new Admin Panel settings immediately.
+      // This clears the old interval and creates a new one,
+      // so changing 3 -> 60 minutes does NOT require a Render restart.
+      await startScheduler();
+
+      console.log(
+        `[AUTO] Scheduler updated from Admin Panel: every ${saved.postIntervalMinutes} minute(s), autoPost=${saved.autoPost}`
       );
+
+      res.json(saved);
 
     } catch (error) {
       res
@@ -2372,10 +2403,7 @@ async function runScheduledPost() {
 
 async function startScheduler() {
   if (schedulerStarting) {
-    console.log(
-      '[AUTO] Scheduler start already in progress.'
-    );
-
+    console.log('[AUTO] Scheduler update already in progress.');
     return;
   }
 
@@ -2383,47 +2411,37 @@ async function startScheduler() {
 
   try {
     if (autoTimer) {
-      clearInterval(
-        autoTimer
-      );
-
+      clearInterval(autoTimer);
       autoTimer = null;
     }
 
-    const settings =
-      await getSettings();
+    const settings = await getSettings();
+    const enabled = !!settings?.autoPost;
+    const minutes = Math.max(
+      1,
+      Number(settings?.postIntervalMinutes ?? 60) || 60
+    );
 
-    const minutes =
-      Math.max(
-        1,
-        Number(
-          settings?.postIntervalMinutes ||
-          60
-        )
-      );
+    if (!enabled) {
+      console.log('[AUTO] Automatic posting is OFF. Scheduler stopped.');
+      return;
+    }
 
     console.log(
       `Automatic posting scheduled every ${minutes} minute(s).`
     );
 
-    autoTimer =
-      setInterval(
-        () => {
-          runScheduledPost();
-        },
-        minutes * 60 * 1000
-      );
+    autoTimer = setInterval(() => {
+      void runScheduledPost();
+    }, minutes * 60 * 1000);
 
   } catch (error) {
     console.error(
       '[AUTO ERROR] Scheduler start:',
-      error?.message ||
-      error
+      error?.message || error
     );
-
   } finally {
-    schedulerStarting =
-      false;
+    schedulerStarting = false;
   }
 }
 /* =========================================================
@@ -2768,81 +2786,6 @@ const CREATIVE_SEEDS = [
 
 
 /* =========================================================
-   SERVER START
-========================================================= */
-
-async function boot() {
-  try {
-    /*
-     * Test database initialization.
-     * getSettings() also creates the default
-     * settings row when it does not exist.
-     */
-    await getSettings();
-
-    /*
-     * Initialize Cloudinary configuration
-     * when environment variables exist.
-     */
-    if (cloudinaryReady()) {
-      configureCloudinary();
-
-      console.log(
-        '[CLOUDINARY] Configuration loaded.'
-      );
-    } else {
-      console.warn(
-        '[CLOUDINARY] Environment variables are missing.'
-      );
-    }
-
-    /*
-     * Start HTTP server.
-     */
-    app.listen(
-      PORT,
-      () => {
-        console.log(
-          `PromptForge server running on port ${PORT}`
-        );
-
-        console.log(
-          `Environment: ${
-            process.env.NODE_ENV ||
-            'production'
-          }`
-        );
-
-        /*
-         * Start exactly one scheduler.
-         */
-        startScheduler()
-          .catch(
-            error => {
-              console.error(
-                '[AUTO ERROR] Initial scheduler:',
-                error?.message ||
-                error
-              );
-            }
-          );
-      }
-    );
-
-  } catch (error) {
-    console.error(
-      '[FATAL] Server boot failed:',
-      error
-    );
-
-    process.exit(
-      1
-    );
-  }
-}
-
-
-/* =========================================================
    PROCESS SAFETY
 ========================================================= */
 
@@ -2911,11 +2854,6 @@ process.on(
 );
 
 
-/* =========================================================
-   START
-========================================================= */
-
-boot();
 /* =========================================================
    ROUTES
 ========================================================= */
