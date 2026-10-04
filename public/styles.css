@@ -1755,3 +1755,90 @@ img {
   }
 
 }
+
+
+/* =========================================================
+   COPY PROMPT AD GATE
+========================================================= */
+
+.copy-ad-gate{
+  position:fixed;
+  inset:0;
+  z-index:99999;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  padding:18px;
+  background:rgba(3,3,7,.86);
+  backdrop-filter:blur(8px);
+}
+
+.copy-ad-gate-card{
+  width:min(560px,100%);
+  padding:22px;
+  border:1px solid #383343;
+  border-radius:20px;
+  background:linear-gradient(145deg,#191722,#0f0e14);
+  box-shadow:0 25px 90px rgba(0,0,0,.55);
+  text-align:center;
+}
+
+.copy-ad-gate-kicker{
+  color:#9b7cff;
+  font-size:11px;
+  font-weight:800;
+  letter-spacing:2px;
+}
+
+.copy-ad-gate-title{
+  margin-top:7px;
+  font-size:22px;
+  font-weight:800;
+}
+
+.copy-ad-gate-timer{
+  margin:10px auto 15px;
+  width:72px;
+  height:72px;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  border-radius:50%;
+  border:2px solid #8064ff;
+  color:#fff;
+  font-size:22px;
+  font-weight:900;
+  box-shadow:0 0 30px rgba(128,100,255,.22);
+}
+
+.copy-ad-gate-ad{
+  min-height:100px;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  overflow:hidden;
+  border-radius:14px;
+  background:#09080d;
+}
+
+.copy-ad-gate-ad .adframe{
+  display:block;
+  width:100%;
+  max-width:100%;
+}
+
+.copy-ad-gate-placeholder{
+  min-height:100px;
+  width:100%;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  color:#777382;
+  font-size:13px;
+}
+
+.copy-ad-gate-note{
+  margin-top:13px;
+  color:#9f9bad;
+  font-size:13px;
+}
