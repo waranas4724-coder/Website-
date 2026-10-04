@@ -251,7 +251,19 @@ const card = (p) => {
   <div class="thumb">
     ${
       image
-        ? `
+        ? String(p.media || "").toLowerCase() === "video"
+          ? `
+      <video
+        src="${esc(image)}"
+        muted
+        playsinline
+        preload="metadata"
+        controls
+        style="width:100%;height:100%;object-fit:cover;"
+        onerror="this.style.display='none'"
+      ></video>
+      `
+          : `
       <img
         src="${esc(image)}"
         loading="lazy"
@@ -460,6 +472,122 @@ async function copyText(text) {
    COPY GATE
 ========================================================= */
 
+function closeCopyGateOverlay() {
+  const existing = document.getElementById("copyAdGate");
+  if (existing) existing.remove();
+}
+
+function showCopyGateOverlay(seconds, button, slug = "") {
+  closeCopyGateOverlay();
+
+  const overlay = document.createElement("div");
+  overlay.id = "copyAdGate";
+  overlay.className = "copy-ad-gate";
+  overlay.innerHTML = `
+    <div class="copy-ad-gate-card">
+      <div class="copy-ad-gate-kicker">ADVERTISEMENT</div>
+      <div class="copy-ad-gate-title">Please wait</div>
+      <div class="copy-ad-gate-timer" id="copyAdGateTimer">${Math.max(0, seconds)}s</div>
+      <div class="copy-ad-gate-ad">
+        ${
+          ADS?.modal_banner?.enabled
+            ? frame("modal_banner")
+            : ADS?.banner_top?.enabled
+              ? frame("banner_top")
+              : `<div class="copy-ad-gate-placeholder">Advertisement</div>`
+        }
+      </div>
+      <div class="copy-ad-gate-note">
+        Your prompt will unlock when the countdown finishes.
+      </div>
+    </div>
+  `;
+
+  document.body.appendChild(overlay);
+
+  let remaining = Math.max(0, Number(seconds || 0));
+  const timer = setInterval(() => {
+    remaining -= 1;
+
+    const timerEl = document.getElementById("copyAdGateTimer");
+    if (timerEl) {
+      timerEl.textContent = `${Math.max(0, remaining)}s`;
+    }
+
+    if (remaining <= 0) {
+      clearInterval(timer);
+
+      if (button) {
+        button.disabled = false;
+        button.dataset.unlocked = "true";
+        button.textContent = "Copy prompt";
+      }
+
+      closeCopyGateOverlay();
+
+      try {
+        sessionStorage.removeItem("pfCopyGate");
+      } catch {}
+    }
+  }, 1000);
+
+  return timer;
+}
+
+function startLocalCopyGate(prompt, button, slug = "") {
+  const seconds = Math.max(0, Number(copyGateSeconds || 0));
+
+  button.disabled = true;
+  button.dataset.unlocked = "false";
+  button.textContent = `Please wait ${seconds}s`;
+
+  if (seconds <= 0) {
+    button.disabled = false;
+    button.dataset.unlocked = "true";
+    button.textContent = "Copy prompt";
+    return;
+  }
+
+  showCopyGateOverlay(seconds, button, slug);
+}
+
+function resumeCopyGate() {
+  let state = null;
+
+  try {
+    state = JSON.parse(
+      sessionStorage.getItem("pfCopyGate") || "null"
+    );
+  } catch {}
+
+  if (!state || !state.startedAt || !state.slug) return;
+
+  const match = location.pathname.match(/^\/p\/([\w-]+)/);
+  if (!match || decodeURIComponent(match[1]) !== state.slug) {
+    return;
+  }
+
+  const button = document.getElementById("copy");
+  if (!button) return;
+
+  const elapsed = Math.floor((Date.now() - Number(state.startedAt)) / 1000);
+  const remaining = Math.max(0, Number(state.seconds || copyGateSeconds) - elapsed);
+
+  if (remaining <= 0) {
+    button.disabled = false;
+    button.dataset.unlocked = "true";
+    button.textContent = "Copy prompt";
+    closeCopyGateOverlay();
+    try { sessionStorage.removeItem("pfCopyGate"); } catch {}
+    return;
+  }
+
+  button.disabled = true;
+  button.dataset.unlocked = "false";
+  button.textContent = `Please wait ${remaining}s`;
+  showCopyGateOverlay(remaining, button, state.slug);
+}
+
 async function copyWithGate(
   prompt,
   button
@@ -506,53 +634,31 @@ async function copyWithGate(
     );
   }
 
-  if (
-    directLink
-  ) {
+  const currentSlug =
+    (location.pathname.match(/^\/p\/([\w-]+)/) || [])[1] || "";
+
+  if (directLink) {
     try {
-      window.open(
-        directLink,
-        "_blank",
-        "noopener,noreferrer"
+      sessionStorage.setItem(
+        "pfCopyGate",
+        JSON.stringify({
+          startedAt: Date.now(),
+          seconds,
+          slug: decodeURIComponent(currentSlug)
+        })
       );
     } catch {}
+
+    button.disabled = true;
+    button.textContent = `Opening...`;
+
+    // Use the same tab so the user can return with Back and the
+    // countdown continues from the original start timestamp.
+    window.location.assign(directLink);
+    return;
   }
 
-  let remaining =
-    seconds;
-
-  button.disabled =
-    true;
-
-  button.textContent =
-    `Please wait ${remaining}s`;
-
-  const interval =
-    setInterval(() => {
-      remaining--;
-
-      if (
-        remaining <= 0
-      ) {
-        clearInterval(
-          interval
-        );
-
-        button.disabled =
-          false;
-
-        button.dataset.unlocked =
-          "true";
-
-        button.textContent =
-          "Copy prompt";
-
-        return;
-      }
-
-      button.textContent =
-        `Please wait ${remaining}s`;
-    }, 1000);
+  startLocalCopyGate(prompt, button, currentSlug);
 }
 
 
@@ -623,7 +729,23 @@ async function openPrompt(
 
       ${
         image
-          ? `
+          ? String(p.media || "").toLowerCase() === "video"
+            ? `
+        <video
+          src="${esc(image)}"
+          controls
+          playsinline
+          preload="metadata"
+          style="
+            width:100%;
+            max-height:600px;
+            border-radius:14px;
+            margin-bottom:16px;
+            background:#000;
+          "
+        ></video>
+        `
+            : `
         <img
           src="${esc(image)}"
           alt="${esc(p.title)}"
@@ -718,6 +840,7 @@ async function openPrompt(
             p.prompt,
             copyButton
           );
+      resumeCopyGate();
     }
   } catch (error) {
     console.error(
@@ -952,6 +1075,15 @@ document.addEventListener(
 );
 
 window.addEventListener(
+  "pageshow",
+  () => {
+    // Returning from the direct-link ad page may restore this page
+    // from the browser back-forward cache. Resume the same timer.
+    resumeCopyGate();
+  }
+);
+
+window.addEventListener(
   "popstate",
   () => {
     const match =
@@ -1081,6 +1213,17 @@ async function init() {
   ]);
 
   await load();
+
+  const initialMatch =
+    location.pathname.match(/^\/p\/([\w-]+)/);
+
+  if (initialMatch) {
+    await openPrompt(
+      decodeURIComponent(initialMatch[1]),
+      false
+    );
+    resumeCopyGate();
+  }
 
   startAutoRefresh();
 }
