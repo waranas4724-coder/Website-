@@ -19,7 +19,9 @@ const {
   getSettings,
   saveSettings,
   getAds,
-  saveAds
+  saveAds,
+  getPosterUsers,
+  savePosterUsers
 } = require('./db');
 
 const app = express();
@@ -39,6 +41,23 @@ const galleryUpload = multer({
     }
 
     return cb(new Error('Only image files are allowed.'));
+  }
+});
+
+// Manual/Admin/Poster media uploads. Images and videos are sent directly
+// to Cloudinary; nothing permanent is written to Render's local disk.
+const mediaUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: {
+    fileSize: 100 * 1024 * 1024
+  },
+  fileFilter: (req, file, cb) => {
+    const type = String(file.mimetype || '');
+    if (type.startsWith('image/') || type.startsWith('video/')) {
+      return cb(null, true);
+    }
+
+    return cb(new Error('Only image or video files are allowed.'));
   }
 });
 
@@ -1381,7 +1400,8 @@ function configureCloudinary() {
 
 async function uploadToCloudinary(
   buffer,
-  title
+  title,
+  resourceType = 'image'
 ) {
   if (!configureCloudinary()) {
     throw new Error(
@@ -1401,7 +1421,7 @@ async function uploadToCloudinary(
               `${slugify(title)}-${Date.now()}`,
 
             resource_type:
-              'image'
+              resourceType
           },
 
           (error, result) => {
@@ -1612,6 +1632,53 @@ function requireAdmin(
     });
 }
 
+function requirePublisher(req, res, next) {
+  if (req.session?.admin || req.session?.posterUser) {
+    return next();
+  }
+
+  return res.status(401).json({
+    error: 'Publisher login required.'
+  });
+}
+
+function requirePosterOrAdmin(req, res, next) {
+  return requirePublisher(req, res, next);
+}
+
+function hashPosterPassword(password, salt = crypto.randomBytes(16).toString('hex')) {
+  const hash = crypto
+    .scryptSync(String(password), salt, 64)
+    .toString('hex');
+
+  return `${salt}:${hash}`;
+}
+
+function verifyPosterPassword(password, stored) {
+  try {
+    const [salt, expectedHex] = String(stored || '').split(':');
+    if (!salt || !expectedHex) return false;
+
+    const actual = crypto.scryptSync(String(password), salt, 64);
+    const expected = Buffer.from(expectedHex, 'hex');
+
+    return expected.length === actual.length &&
+      crypto.timingSafeEqual(actual, expected);
+  } catch {
+    return false;
+  }
+}
+
+async function sanitizePosterUsers() {
+  const users = await getPosterUsers();
+  return users.map(user => ({
+    id: user.id,
+    username: user.username,
+    enabled: user.enabled !== false,
+    createdAt: user.createdAt || user.created_at || null
+  }));
+}
+
 app.post(
   '/api/login',
   (req, res) => {
@@ -1644,9 +1711,11 @@ app.post(
     ) {
       req.session.admin =
         true;
+      req.session.role = 'admin';
 
       return res.json({
-        ok: true
+        ok: true,
+        role: 'admin'
       });
     }
 
@@ -1656,6 +1725,78 @@ app.post(
         error:
           'Invalid username or password.'
       });
+  }
+);
+
+
+app.post(
+  '/api/poster/login',
+  (req, res) => {
+    (async () => {
+      try {
+        const username = clean(req.body?.username, 100).toLowerCase();
+        const password = String(req.body?.password || '');
+
+        if (!username || !password) {
+          return res.status(400).json({
+            error: 'Username and password required.'
+          });
+        }
+
+        const users = await getPosterUsers();
+        const user = users.find(
+          item =>
+            String(item.username || '').toLowerCase() === username &&
+            item.enabled !== false
+        );
+
+        if (!user || !verifyPosterPassword(password, user.passwordHash)) {
+          return res.status(401).json({
+            error: 'Invalid username or password.'
+          });
+        }
+
+        req.session.posterUser = {
+          id: user.id,
+          username: user.username
+        };
+        req.session.role = 'poster';
+
+        return res.json({
+          ok: true,
+          role: 'poster',
+          username: user.username
+        });
+      } catch (error) {
+        return res.status(500).json({
+          error: error.message
+        });
+      }
+    })();
+  }
+);
+
+app.get(
+  '/api/poster/me',
+  (req, res) => {
+    res.json({
+      authenticated: !!req.session?.posterUser,
+      role: req.session?.posterUser ? 'poster' : null,
+      username: req.session?.posterUser?.username || null
+    });
+  }
+);
+
+app.post(
+  '/api/poster/logout',
+  (req, res) => {
+    if (req.session) {
+      req.session.destroy(() => {
+        res.json({ ok: true });
+      });
+    } else {
+      res.json({ ok: true });
+    }
   }
 );
 
@@ -1676,7 +1817,13 @@ app.get(
   (req, res) => {
     res.json({
       authenticated:
-        !!req.session?.admin
+        !!req.session?.admin,
+      role:
+        req.session?.admin
+          ? 'admin'
+          : req.session?.posterUser
+            ? 'poster'
+            : null
     });
   }
 );
@@ -1802,10 +1949,10 @@ app.get(
         'no-store'
       );
 
-      res.json(
-        (await getAds()) ||
-        {}
-      );
+      const ads = (await getAds()) || {};
+      const { posterUsers, ...publicAds } = ads;
+
+      res.json(publicAds);
 
     } catch (error) {
       res
@@ -2138,6 +2285,131 @@ app.delete(
   }
 );
 
+
+
+/* =========================================================
+   POSTER USER MANAGEMENT
+========================================================= */
+
+app.get(
+  '/api/admin/poster-users',
+  requireAdmin,
+  async (req, res) => {
+    try {
+      res.json(await sanitizePosterUsers());
+    } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
+  }
+);
+
+app.post(
+  '/api/admin/poster-users',
+  requireAdmin,
+  async (req, res) => {
+    try {
+      const username = clean(req.body?.username, 100).toLowerCase();
+      const password = String(req.body?.password || '');
+
+      if (!/^[a-z0-9._-]{3,50}$/.test(username)) {
+        return res.status(400).json({
+          error: 'Username must be 3-50 characters: letters, numbers, dot, underscore or dash.'
+        });
+      }
+
+      if (password.length < 6) {
+        return res.status(400).json({
+          error: 'Password must be at least 6 characters.'
+        });
+      }
+
+      const users = await getPosterUsers();
+
+      if (users.some(user => String(user.username || '').toLowerCase() === username)) {
+        return res.status(409).json({
+          error: 'That username already exists.'
+        });
+      }
+
+      const user = {
+        id: crypto.randomUUID(),
+        username,
+        passwordHash: hashPosterPassword(password),
+        enabled: true,
+        createdAt: new Date().toISOString()
+      };
+
+      users.push(user);
+      await savePosterUsers(users);
+
+      res.json({
+        ok: true,
+        user: {
+          id: user.id,
+          username: user.username,
+          enabled: true,
+          createdAt: user.createdAt
+        }
+      });
+    } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
+  }
+);
+
+app.patch(
+  '/api/admin/poster-users/:id',
+  requireAdmin,
+  async (req, res) => {
+    try {
+      const users = await getPosterUsers();
+      const user = users.find(item => String(item.id) === String(req.params.id));
+
+      if (!user) {
+        return res.status(404).json({ error: 'User not found.' });
+      }
+
+      if (req.body?.enabled !== undefined) {
+        user.enabled = !!req.body.enabled;
+      }
+
+      if (req.body?.password) {
+        const password = String(req.body.password);
+        if (password.length < 6) {
+          return res.status(400).json({
+            error: 'Password must be at least 6 characters.'
+          });
+        }
+        user.passwordHash = hashPosterPassword(password);
+      }
+
+      await savePosterUsers(users);
+      res.json({ ok: true });
+    } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
+  }
+);
+
+app.delete(
+  '/api/admin/poster-users/:id',
+  requireAdmin,
+  async (req, res) => {
+    try {
+      const users = await getPosterUsers();
+      const next = users.filter(item => String(item.id) !== String(req.params.id));
+
+      if (next.length === users.length) {
+        return res.status(404).json({ error: 'User not found.' });
+      }
+
+      await savePosterUsers(next);
+      res.json({ ok: true });
+    } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
+  }
+);
 
 /* =========================================================
    SETTINGS
@@ -2603,6 +2875,68 @@ app.post(
   }
 );
 
+
+/* =========================================================
+   MEDIA UPLOAD (IMAGE + VIDEO)
+========================================================= */
+
+app.post(
+  '/api/publisher/upload-media',
+  requirePublisher,
+  (req, res) => {
+    mediaUpload.single('media')(req, res, async error => {
+      try {
+        if (error) {
+          return res.status(400).json({
+            error: error.message || 'Media upload failed.'
+          });
+        }
+
+        if (!req.file) {
+          return res.status(400).json({
+            error: 'Please select an image or video.'
+          });
+        }
+
+        const resourceType =
+          String(req.file.mimetype || '').startsWith('video/')
+            ? 'video'
+            : 'image';
+
+        const title =
+          clean(
+            req.body?.title,
+            140
+          ) ||
+          req.file.originalname.replace(/\.[^.]+$/, '');
+
+        const uploaded = await uploadToCloudinary(
+          req.file.buffer,
+          title,
+          resourceType
+        );
+
+        return res.json({
+          ok: true,
+          url: uploaded.secure_url,
+          secureUrl: uploaded.secure_url,
+          publicId: uploaded.public_id,
+          resourceType,
+          format: uploaded.format,
+          bytes: uploaded.bytes,
+          width: uploaded.width,
+          height: uploaded.height
+        });
+      } catch (uploadError) {
+        console.error('[PUBLISHER ERROR] Media upload:', uploadError);
+        return res.status(500).json({
+          error: uploadError.message || 'Media upload failed.'
+        });
+      }
+    });
+  }
+);
+
 /* =========================================================
    MANUAL PUBLISH
 ========================================================= */
@@ -2715,6 +3049,58 @@ app.post(
   }
 );
 
+
+
+/* =========================================================
+   PUBLISHER POST
+========================================================= */
+
+app.post(
+  '/api/publisher/publish',
+  requirePublisher,
+  async (req, res) => {
+    try {
+      const b = req.body || {};
+      const title = clean(b.title, 140);
+      const prompt = clean(b.prompt, 10000);
+      const media = clean(b.media, 40) || 'Image';
+      const mediaUrl = clean(b.imageUrl || b.mediaUrl, 5000);
+
+      if (!title || !prompt || !mediaUrl) {
+        return res.status(400).json({
+          error: 'Title, prompt and media are required.'
+        });
+      }
+
+      if (!['Image', 'Video'].includes(media)) {
+        return res.status(400).json({
+          error: 'Publisher users can only publish Image or Video posts.'
+        });
+      }
+
+      const existing = await getPrompts();
+      const finalTitle = uniqueTitle(title, existing);
+
+      const item = await addPrompt({
+        id: crypto.randomUUID(),
+        slug: makeSlug(finalTitle),
+        title: finalTitle,
+        prompt,
+        category: clean(b.category, 100) || 'Creative Art',
+        media,
+        imageUrl: mediaUrl,
+        model: clean(b.model, 100) || 'Manual',
+        source: req.session?.admin ? 'Manual' : `Poster:${req.session?.posterUser?.username || 'User'}`,
+        publishedAt: new Date().toISOString()
+      });
+
+      res.json({ ok: true, item });
+    } catch (error) {
+      console.error('[PUBLISHER ERROR] Publish:', error);
+      res.status(500).json({ error: error.message });
+    }
+  }
+);
 
 /* =========================================================
    COPY GATE VALIDATION
@@ -2953,6 +3339,18 @@ app.get(
         __dirname,
         'public',
         'admin.html'
+      )
+    )
+);
+
+app.get(
+  '/poster',
+  (req, res) =>
+    res.sendFile(
+      path.join(
+        __dirname,
+        'public',
+        'poster.html'
       )
     )
 );
