@@ -768,28 +768,58 @@ async function getAds() {
       );
     }
 
-    return (
-      created.data ||
-      DEFAULT_ADS
-    );
+    return {
+      ...DEFAULT_ADS,
+      ...(created.data || {})
+    };
   }
 
-  return (
-    data.data ||
-    DEFAULT_ADS
-  );
+  return {
+    ...DEFAULT_ADS,
+    ...(data.data || {})
+  };
 }
 
 async function saveAds(
   ads = {}
 ) {
+  const { data: existingRow, error: existingError } =
+    await supabase
+      .from("ads")
+      .select("data")
+      .eq("id", 1)
+      .maybeSingle();
+
+  if (existingError) {
+    throw new Error(
+      `Supabase read ads error: ${existingError.message}`
+    );
+  }
+
+  const existingData =
+    existingRow?.data &&
+    typeof existingRow.data === "object"
+      ? existingRow.data
+      : {};
+
+  const nextAds = {
+    ...ads
+  };
+
+  if (
+    nextAds.posterUsers === undefined &&
+    existingData.posterUsers !== undefined
+  ) {
+    nextAds.posterUsers = existingData.posterUsers;
+  }
+
   const { data, error } =
     await supabase
       .from("ads")
       .upsert(
         {
           id: 1,
-          data: ads
+          data: nextAds
         },
         {
           onConflict: "id"
@@ -808,6 +838,68 @@ async function saveAds(
     data.data ||
     ads
   );
+}
+
+
+/* =========================================================
+   POSTER USERS
+   Stored inside the existing ads JSONB row so no new Supabase
+   table is required. Passwords are stored as salted hashes.
+========================================================= */
+
+async function getPosterUsers() {
+  const { data, error } = await supabase
+    .from("ads")
+    .select("data")
+    .eq("id", 1)
+    .maybeSingle();
+
+  if (error) {
+    throw new Error(`Supabase poster users error: ${error.message}`);
+  }
+
+  const users = data?.data?.posterUsers;
+  return Array.isArray(users) ? users : [];
+}
+
+async function savePosterUsers(users = []) {
+  const { data: current, error: readError } = await supabase
+    .from("ads")
+    .select("data")
+    .eq("id", 1)
+    .maybeSingle();
+
+  if (readError) {
+    throw new Error(`Supabase poster users read error: ${readError.message}`);
+  }
+
+  const currentData =
+    current?.data && typeof current.data === "object"
+      ? current.data
+      : {};
+
+  const { data, error } = await supabase
+    .from("ads")
+    .upsert(
+      {
+        id: 1,
+        data: {
+          ...currentData,
+          posterUsers: Array.isArray(users) ? users : []
+        }
+      },
+      { onConflict: "id" }
+    )
+    .select("*")
+    .single();
+
+  if (error) {
+    throw new Error(`Supabase poster users save error: ${error.message}`);
+  }
+
+  return Array.isArray(data?.data?.posterUsers)
+    ? data.data.posterUsers
+    : [];
 }
 
 /* =========================================================
@@ -838,5 +930,9 @@ module.exports = {
 
   /* Ads */
   getAds,
-  saveAds
+  saveAds,
+
+  /* Poster Users */
+  getPosterUsers,
+  savePosterUsers
 };
