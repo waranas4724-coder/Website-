@@ -1069,6 +1069,68 @@
     </section>
 
 
+
+    <!-- POSTER USERS -->
+
+    <section class="card">
+
+      <span class="kicker">
+        USER ACCESS
+      </span>
+
+      <h2>
+        Photo / Video Publisher Users
+      </h2>
+
+      <p class="muted">
+        এখানে আলাদা username/password তৈরি করতে পারবে।
+        এই users শুধু Photo এবং Video post করতে পারবে।
+        API, Ads, Automation বা অন্য Admin settings দেখতে পারবে না।
+      </p>
+      <p class="small muted">
+        Publisher login: <code>/poster</code>
+      </p>
+
+      <div class="two">
+        <input
+          id="posterUsername"
+          class="field"
+          placeholder="Username"
+          autocomplete="off"
+        >
+
+        <input
+          id="posterPassword"
+          class="field"
+          type="password"
+          placeholder="Password (minimum 6)"
+          autocomplete="new-password"
+        >
+      </div>
+
+      <div class="actions">
+        <button
+          id="addPosterUserBtn"
+          class="btn btn-primary"
+          type="button"
+        >
+          Create Publisher User
+        </button>
+
+        <span
+          id="posterUserStatus"
+          class="status"
+        ></span>
+      </div>
+
+      <div
+        id="posterUsersList"
+        style="margin-top:14px;"
+      ></div>
+
+    </section>
+
+
     <!-- MANUAL PUBLISH -->
 
     <section class="card">
@@ -1164,7 +1226,7 @@
           id="manualGalleryStatus"
           class="status"
         >
-          JPG, PNG, WEBP · max 10 MB
+          JPG, PNG, WEBP, MP4 · max 100 MB
         </span>
 
       </div>
@@ -1178,6 +1240,12 @@
           alt="Selected image preview"
           style="display:block;width:min(420px,100%);max-height:280px;object-fit:cover;border-radius:14px;border:1px solid #302c39;"
         >
+        <video
+          id="manualVideoPreview"
+          controls
+          playsinline
+          style="display:none;width:min(420px,100%);max-height:280px;border-radius:14px;border:1px solid #302c39;"
+        ></video>
       </div>
 
 
@@ -2368,6 +2436,124 @@ async function(){
 };
 
 
+
+/* =========================================================
+   POSTER USERS
+========================================================= */
+
+async function loadPosterUsers(){
+  const result = await api("/api/admin/poster-users");
+
+  if(!result.response.ok){
+    $("posterUsersList").innerHTML =
+      `<div class="muted">${esc(result.data?.error || "Could not load users.")}</div>`;
+    return;
+  }
+
+  const users = Array.isArray(result.data) ? result.data : [];
+
+  if(!users.length){
+    $("posterUsersList").innerHTML =
+      `<div class="muted">No publisher users yet.</div>`;
+    return;
+  }
+
+  $("posterUsersList").innerHTML =
+    users.map(user => `
+      <div class="provider-card" style="margin-bottom:8px;">
+        <div>
+          <strong>${esc(user.username)}</strong>
+          <div class="muted small">
+            ${user.enabled !== false ? "Enabled" : "Disabled"}
+          </div>
+        </div>
+
+        <div class="actions" style="margin-top:0;">
+          <button
+            class="btn ${user.enabled !== false ? "" : "btn-success"}"
+            type="button"
+            data-poster-toggle="${esc(user.id)}"
+            data-enabled="${user.enabled !== false ? "true" : "false"}"
+          >
+            ${user.enabled !== false ? "Disable" : "Enable"}
+          </button>
+
+          <button
+            class="btn btn-danger"
+            type="button"
+            data-poster-delete="${esc(user.id)}"
+          >
+            Delete
+          </button>
+        </div>
+      </div>
+    `).join("");
+
+  document.querySelectorAll("[data-poster-toggle]").forEach(btn => {
+    btn.onclick = async () => {
+      const id = btn.dataset.posterToggle;
+      const enabled = btn.dataset.enabled !== "true";
+
+      const result = await api(`/api/admin/poster-users/${encodeURIComponent(id)}`, {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({ enabled })
+      });
+
+      if(!result.response.ok){
+        alert(result.data?.error || "Could not update user.");
+        return;
+      }
+
+      await loadPosterUsers();
+    };
+  });
+
+  document.querySelectorAll("[data-poster-delete]").forEach(btn => {
+    btn.onclick = async () => {
+      if(!confirm("Delete this publisher user?")) return;
+
+      const result = await api(`/api/admin/poster-users/${encodeURIComponent(btn.dataset.posterDelete)}`, {
+        method: "DELETE"
+      });
+
+      if(!result.response.ok){
+        alert(result.data?.error || "Could not delete user.");
+        return;
+      }
+
+      await loadPosterUsers();
+    };
+  });
+}
+
+$("addPosterUserBtn").onclick = async function(){
+  const username = $("posterUsername").value.trim();
+  const password = $("posterPassword").value;
+
+  $("posterUserStatus").textContent = "Creating...";
+
+  const result = await api("/api/admin/poster-users", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({ username, password })
+  });
+
+  if(result.response.ok){
+    $("posterUsername").value = "";
+    $("posterPassword").value = "";
+    $("posterUserStatus").textContent = "Created ✓";
+    await loadPosterUsers();
+  }else{
+    $("posterUserStatus").textContent =
+      result.data?.error || "Could not create user.";
+  }
+};
+
 /* =========================================================
    DIRECT GALLERY UPLOAD
 ========================================================= */
@@ -2380,44 +2566,50 @@ function(){
 $("manualGalleryInput").addEventListener(
   "change",
   async function(){
-    const file =
-      this.files?.[0];
+    const file = this.files?.[0];
 
     if(!file){
       return;
     }
 
-    if(!file.type.startsWith("image/")){
+    const isImage = file.type.startsWith("image/");
+    const isVideo = file.type.startsWith("video/");
+
+    if(!isImage && !isVideo){
       $("manualGalleryStatus").textContent =
-        "Please select an image.";
+        "Please select an image or video.";
       this.value = "";
       return;
     }
 
-    if(file.size > 10 * 1024 * 1024){
+    if(file.size > 100 * 1024 * 1024){
       $("manualGalleryStatus").textContent =
-        "Image is too large. Maximum 10 MB.";
+        "File is too large. Maximum 100 MB.";
       this.value = "";
       return;
     }
 
-    const previewUrl =
-      URL.createObjectURL(file);
+    const previewUrl = URL.createObjectURL(file);
 
-    $("manualImagePreview").src =
-      previewUrl;
+    $("manualImagePreview").style.display = isImage ? "block" : "none";
+    $("manualVideoPreview").style.display = isVideo ? "block" : "none";
 
-    $("manualImagePreviewWrap").style.display =
-      "block";
+    if(isImage){
+      $("manualImagePreview").src = previewUrl;
+    }else{
+      $("manualVideoPreview").src = previewUrl;
+    }
+
+    $("manualImagePreviewWrap").style.display = "block";
+
+    $("manualMedia").value = isVideo ? "Video" : "Image";
 
     $("manualGalleryStatus").textContent =
       "Uploading to Cloudinary...";
 
-    const form =
-      new FormData();
+    const form = new FormData();
 
-    form.append("image", file);
-
+    form.append("media", file);
     form.append(
       "title",
       $("manualTitle").value.trim() ||
@@ -2425,30 +2617,26 @@ $("manualGalleryInput").addEventListener(
     );
 
     try{
-      const result =
-        await api(
-          "/api/admin/upload-image",
-          {
-            method:"POST",
-            body:form
-          }
-        );
+      const result = await api(
+        "/api/publisher/upload-media",
+        {
+          method:"POST",
+          body:form
+        }
+      );
 
       if(result.response.ok && result.data?.url){
-        $("manualImage").value =
-          result.data.url;
+        $("manualImage").value = result.data.url;
 
         $("manualGalleryStatus").textContent =
-          "Uploaded ✓ Image URL added automatically.";
+          `${isVideo ? "Video" : "Image"} uploaded ✓ URL added automatically.`;
       }else{
         $("manualGalleryStatus").textContent =
-          result.data?.error ||
-          "Upload failed.";
+          result.data?.error || "Upload failed.";
       }
     }catch(error){
       $("manualGalleryStatus").textContent =
-        error.message ||
-        "Upload failed.";
+        error.message || "Upload failed.";
     }finally{
       URL.revokeObjectURL(previewUrl);
       this.value = "";
@@ -2542,8 +2730,10 @@ async function(){
 
     $("manualImagePreviewWrap").style.display = "none";
     $("manualImagePreview").removeAttribute("src");
+    $("manualVideoPreview").removeAttribute("src");
+    $("manualVideoPreview").style.display = "none";
     $("manualGalleryStatus").textContent =
-      "JPG, PNG, WEBP · max 10 MB";
+      "JPG, PNG, WEBP, MP4 · max 100 MB";
 
 
     await loadPosts();
@@ -2945,7 +3135,8 @@ async function loadEverything(){
     loadProviders(),
     loadSettings(),
     loadAds(),
-    loadPosts()
+    loadPosts(),
+    loadPosterUsers()
   ]);
 
 }
