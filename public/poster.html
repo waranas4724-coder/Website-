@@ -1,0 +1,234 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>PromptForge · Publisher</title>
+  <style>
+    *{box-sizing:border-box}
+    html,body{margin:0;min-height:100%;background:#0b0a10;color:#fff;font-family:Inter,system-ui,-apple-system,"Segoe UI",sans-serif}
+    .wrap{width:min(760px,94%);margin:auto;padding:28px 0 70px}
+    .card{background:linear-gradient(145deg,rgba(25,23,34,.96),rgba(16,15,22,.96));border:1px solid #292632;border-radius:20px;padding:22px;margin-bottom:18px;box-shadow:0 12px 40px rgba(0,0,0,.15)}
+    .login-card{max-width:440px;margin:100px auto}
+    .hidden{display:none!important}
+    .kicker{display:inline-block;color:#9b7cff;font-size:12px;font-weight:800;letter-spacing:1.5px;text-transform:uppercase;margin-bottom:8px}
+    h1,h2{margin:0 0 14px}
+    .muted{color:#9996a8}.field{width:100%;display:block;padding:13px 14px;margin:8px 0;color:#fff;background:#0f0e14;border:1px solid #302c39;border-radius:12px;outline:none}
+    textarea.field{min-height:150px;resize:vertical}
+    .two{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+    .btn{border:0;border-radius:12px;padding:12px 17px;color:#fff;background:#24212d;border:1px solid #383343;font-weight:700;cursor:pointer}
+    .btn-primary{background:linear-gradient(135deg,#7154ff,#9a62ff);border:0}
+    .actions{display:flex;gap:9px;flex-wrap:wrap;margin-top:12px}
+    .status{margin-left:8px;color:#9f9bad;font-size:14px}
+    .preview{width:100%;max-height:360px;object-fit:cover;border-radius:14px;border:1px solid #302c39;margin-top:10px}
+    .top{display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:20px}
+    @media(max-width:600px){.two{grid-template-columns:1fr}}
+  </style>
+</head>
+<body>
+  <main class="wrap">
+    <section id="loginScreen" class="card login-card">
+      <span class="kicker">PUBLISHER ACCESS</span>
+      <h1>PromptForge</h1>
+      <p class="muted">Photo / Video Publisher Login</p>
+      <input id="loginUser" class="field" placeholder="Username" autocomplete="username">
+      <input id="loginPass" class="field" type="password" placeholder="Password" autocomplete="current-password">
+      <button id="loginBtn" class="btn btn-primary" style="width:100%;margin-top:8px">Login</button>
+      <p id="loginError" class="muted"></p>
+    </section>
+
+    <section id="publisherPanel" class="hidden">
+      <div class="top">
+        <div>
+          <span class="kicker">PUBLISHER</span>
+          <h1>Publish Media</h1>
+          <div id="who" class="muted"></div>
+        </div>
+        <button id="logoutBtn" class="btn">Logout</button>
+      </div>
+
+      <section class="card">
+        <input id="title" class="field" placeholder="Title">
+        <textarea id="prompt" class="field" placeholder="Prompt text"></textarea>
+
+        <div class="two">
+          <input id="model" class="field" placeholder="Model">
+          <input id="category" class="field" placeholder="Category">
+        </div>
+
+        <select id="media" class="field">
+          <option value="Image">Image</option>
+          <option value="Video">Video</option>
+        </select>
+
+        <input id="mediaUrl" class="field" placeholder="Media URL (or upload from phone)" readonly>
+
+        <input id="file" type="file" accept="image/*,video/*" hidden>
+
+        <div class="actions">
+          <button id="galleryBtn" type="button" class="btn">📱 Add from Gallery</button>
+          <span id="uploadStatus" class="status">Image / Video · max 100 MB</span>
+        </div>
+
+        <img id="imagePreview" class="preview hidden" alt="Preview">
+        <video id="videoPreview" class="preview hidden" controls playsinline></video>
+
+        <div class="actions">
+          <button id="publishBtn" class="btn btn-primary">Publish Now</button>
+          <span id="status" class="status"></span>
+        </div>
+      </section>
+    </section>
+  </main>
+
+<script>
+const $ = id => document.getElementById(id);
+
+async function api(url, options = {}) {
+  const response = await fetch(url, {
+    credentials: "same-origin",
+    ...options
+  });
+
+  let data = {};
+  try { data = await response.json(); } catch {}
+  return { response, data };
+}
+
+function showPublisher(username) {
+  $("loginScreen").classList.add("hidden");
+  $("publisherPanel").classList.remove("hidden");
+  $("who").textContent = `Logged in as ${username}`;
+}
+
+function showLogin() {
+  $("publisherPanel").classList.add("hidden");
+  $("loginScreen").classList.remove("hidden");
+}
+
+$("loginBtn").onclick = async () => {
+  $("loginError").textContent = "";
+  const result = await api("/api/poster/login", {
+    method: "POST",
+    headers: {"Content-Type":"application/json"},
+    body: JSON.stringify({
+      username: $("loginUser").value.trim(),
+      password: $("loginPass").value
+    })
+  });
+
+  if(result.response.ok){
+    showPublisher(result.data.username || $("loginUser").value.trim());
+  }else{
+    $("loginError").textContent =
+      result.data?.error || "Login failed.";
+  }
+};
+
+$("logoutBtn").onclick = async () => {
+  await api("/api/poster/logout", {method:"POST"});
+  location.reload();
+};
+
+$("galleryBtn").onclick = () => $("file").click();
+
+$("file").addEventListener("change", async () => {
+  const file = $("file").files?.[0];
+  if(!file) return;
+
+  const isImage = file.type.startsWith("image/");
+  const isVideo = file.type.startsWith("video/");
+
+  if(!isImage && !isVideo){
+    $("uploadStatus").textContent = "Please select an image or video.";
+    $("file").value = "";
+    return;
+  }
+
+  if(file.size > 100 * 1024 * 1024){
+    $("uploadStatus").textContent = "Maximum file size is 100 MB.";
+    $("file").value = "";
+    return;
+  }
+
+  $("media").value = isVideo ? "Video" : "Image";
+
+  const previewUrl = URL.createObjectURL(file);
+  $("imagePreview").classList.toggle("hidden", !isImage);
+  $("videoPreview").classList.toggle("hidden", !isVideo);
+
+  if(isImage) $("imagePreview").src = previewUrl;
+  else $("videoPreview").src = previewUrl;
+
+  $("uploadStatus").textContent = "Uploading to Cloudinary...";
+
+  const form = new FormData();
+  form.append("media", file);
+  form.append("title", $("title").value.trim() || file.name.replace(/\.[^.]+$/, ""));
+
+  try{
+    const result = await api("/api/publisher/upload-media", {
+      method:"POST",
+      body:form
+    });
+
+    if(result.response.ok && result.data?.url){
+      $("mediaUrl").value = result.data.url;
+      $("uploadStatus").textContent = "Uploaded ✓";
+    }else{
+      $("uploadStatus").textContent =
+        result.data?.error || "Upload failed.";
+    }
+  }catch(error){
+    $("uploadStatus").textContent = error.message || "Upload failed.";
+  }finally{
+    URL.revokeObjectURL(previewUrl);
+    $("file").value = "";
+  }
+});
+
+$("publishBtn").onclick = async () => {
+  $("status").textContent = "Publishing...";
+
+  const result = await api("/api/publisher/publish", {
+    method:"POST",
+    headers: {"Content-Type":"application/json"},
+    body: JSON.stringify({
+      title: $("title").value.trim(),
+      prompt: $("prompt").value.trim(),
+      model: $("model").value.trim(),
+      category: $("category").value.trim(),
+      media: $("media").value,
+      imageUrl: $("mediaUrl").value.trim()
+    })
+  });
+
+  if(result.response.ok){
+    $("status").textContent = "Published ✓";
+    $("title").value = "";
+    $("prompt").value = "";
+    $("model").value = "";
+    $("category").value = "";
+    $("mediaUrl").value = "";
+    $("imagePreview").removeAttribute("src");
+    $("videoPreview").removeAttribute("src");
+    $("imagePreview").classList.add("hidden");
+    $("videoPreview").classList.add("hidden");
+    $("uploadStatus").textContent = "Image / Video · max 100 MB";
+  }else{
+    $("status").textContent =
+      result.data?.error || "Publish failed.";
+  }
+};
+
+(async function(){
+  const result = await api("/api/poster/me");
+  if(result.data?.authenticated){
+    showPublisher(result.data.username || "Publisher");
+  }else{
+    showLogin();
+  }
+})();
+</script>
+</body>
+</html>
