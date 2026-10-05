@@ -2013,3 +2013,220 @@ body:not(.admin-page)::after { right: -160px; bottom: 8%; background: #a855f7; a
   *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; scroll-behavior: auto !important; }
   .card { opacity: 1; transform: none; }
 }
+
+
+/* =========================================================
+   PREMIUM NEON REFERENCE UI — PUBLIC HOME ONLY
+   Keeps admin/poster styling isolated.
+   ========================================================= */
+.neon-home {
+  --neon-blue: #1677ff;
+  --neon-cyan: #22d3ee;
+  --neon-purple: #8b5cf6;
+  --neon-pink: #d946ef;
+  --neon-bg: #020716;
+  background:
+    radial-gradient(circle at 12% 8%, rgba(37,99,235,.28), transparent 25%),
+    radial-gradient(circle at 88% 18%, rgba(124,58,237,.24), transparent 25%),
+    radial-gradient(circle at 45% 100%, rgba(29,78,216,.18), transparent 34%),
+    #020716;
+}
+.neon-home::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: -1;
+  background:
+    radial-gradient(circle at 0% 65%, rgba(0,119,255,.18), transparent 20%),
+    radial-gradient(circle at 100% 72%, rgba(168,85,247,.16), transparent 20%);
+  animation: neonAmbient 9s ease-in-out infinite alternate;
+}
+@keyframes neonAmbient { from { opacity:.65; transform:scale(1); } to { opacity:1; transform:scale(1.04); } }
+
+.neon-home .site-header {
+  background: rgba(2,7,22,.72);
+  border-bottom: 1px solid rgba(34,211,238,.16);
+  box-shadow: 0 10px 40px rgba(0,0,0,.34), 0 0 30px rgba(37,99,235,.08);
+}
+.neon-home .header-inner { min-height: 64px; gap: 22px; }
+.neon-home .brand-mark {
+  background: linear-gradient(135deg,#4f46e5,#a855f7 55%,#22d3ee);
+  border: 1px solid rgba(255,255,255,.22);
+  box-shadow: 0 0 18px rgba(99,102,241,.55), 0 0 34px rgba(34,211,238,.16);
+}
+.neon-home .brand-text {
+  background: linear-gradient(90deg,#fff,#a5b4fc,#e879f9);
+  -webkit-background-clip:text; background-clip:text; color:transparent;
+}
+.neon-home .header-search input {
+  background: rgba(5,12,31,.72);
+  border: 1px solid rgba(37,99,235,.55);
+  box-shadow: inset 0 0 18px rgba(37,99,235,.08), 0 0 22px rgba(37,99,235,.08);
+}
+.neon-home .header-search input:focus {
+  border-color: #3b82f6;
+  box-shadow: 0 0 0 3px rgba(59,130,246,.13), 0 0 30px rgba(37,99,235,.18);
+}
+.neon-home .nav-link:hover { color:#fff; text-shadow:0 0 14px rgba(96,165,250,.8); }
+
+/* Match the reference: compact top area and jump quickly into the gallery. */
+.neon-home .hero {
+  min-height: 92px;
+  height: 92px;
+  padding: 0;
+  overflow: hidden;
+  background: transparent;
+}
+.neon-home .hero-content { display:none; }
+.neon-home .ad-section:empty { display:none; }
+
+.neon-home .prompts-section { position:relative; }
+.neon-home .section-heading { margin-bottom: 12px; }
+.neon-home .section-kicker { color:#60a5fa; letter-spacing:.16em; }
+.neon-home .section-heading h2 {
+  font-size: clamp(24px,3vw,34px);
+  background: linear-gradient(90deg,#fff,#bfdbfe 45%,#c084fc);
+  -webkit-background-clip:text; background-clip:text; color:transparent;
+}
+.neon-home .result-count { color:#8ea4c7; }
+
+.neon-home .filter-row,
+.neon-home .categories {
+  gap: 9px;
+  scrollbar-width:none;
+}
+.neon-home .filter-row::-webkit-scrollbar,
+.neon-home .categories::-webkit-scrollbar { display:none; }
+.neon-home .pill,
+.neon-home .categories button {
+  background: linear-gradient(180deg,rgba(13,27,58,.9),rgba(7,16,37,.9));
+  border-color: rgba(96,165,250,.22);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.05), 0 0 14px rgba(37,99,235,.04);
+  color:#9eb3d5;
+}
+.neon-home .pill.active,
+.neon-home .categories button.on {
+  color:#fff;
+  border-color:#4f8cff;
+  background:linear-gradient(135deg,#2563eb,#7c3aed);
+  box-shadow:0 0 18px rgba(37,99,235,.5), inset 0 1px 0 rgba(255,255,255,.2);
+}
+
+.neon-home .grid {
+  grid-template-columns: repeat(3,minmax(0,1fr));
+  gap: 16px;
+  margin-top: 18px;
+}
+.neon-home .card {
+  border: 1px solid rgba(67,113,255,.45);
+  border-radius: 17px;
+  background: linear-gradient(180deg,rgba(10,25,55,.92),rgba(5,13,31,.96));
+  box-shadow: 0 12px 34px rgba(0,0,0,.42), inset 0 1px 0 rgba(255,255,255,.06), 0 0 0 rgba(37,99,235,0);
+  overflow:hidden;
+}
+.neon-home .card::before {
+  background: linear-gradient(120deg,transparent 12%,rgba(34,211,238,.95),rgba(99,102,241,.95),rgba(217,70,239,.8),transparent 88%);
+  background-size: 240% 240%;
+}
+.neon-home .card:hover,
+.neon-home .card:focus-visible {
+  transform: translateY(-10px) scale(1.018);
+  border-color:#6ea8ff;
+  box-shadow: 0 26px 65px rgba(0,0,0,.55), 0 0 28px rgba(37,99,235,.28), 0 0 50px rgba(124,58,237,.13);
+}
+.neon-home .thumb { aspect-ratio:16/9; background:#030a18; }
+.neon-home .thumb::after {
+  background:linear-gradient(115deg,transparent 20%,rgba(255,255,255,.25) 48%,transparent 62%);
+}
+.neon-home .card:hover .thumb img,
+.neon-home .card:hover video { transform:scale(1.075); filter:saturate(1.12) contrast(1.04) brightness(1.05); }
+.neon-home .body {
+  padding: 13px 15px 15px;
+  background: linear-gradient(180deg,rgba(8,20,46,.92),rgba(5,12,29,.98));
+}
+.neon-home .meta { color:#75a7e9; }
+.neon-home .body h3 { color:#f7fbff; letter-spacing:-.02em; }
+.neon-home .excerpt { color:#a9bad5; }
+.neon-home .tag {
+  color:#dbeafe;
+  border-color:rgba(96,165,250,.34);
+  background:linear-gradient(90deg,rgba(37,99,235,.28),rgba(124,58,237,.22));
+  box-shadow:0 0 12px rgba(37,99,235,.08);
+}
+
+/* Neon media badge + video treatment without changing data. */
+.neon-home .thumb { position:relative; }
+.neon-home .thumb::before {
+  content: "";
+  position:absolute;
+  top:9px; left:9px;
+  z-index:3;
+  padding:5px 9px;
+  border-radius:999px;
+  background:linear-gradient(90deg,#2563eb,#7c3aed);
+  color:#fff;
+  font-size:9px;
+  font-weight:800;
+  letter-spacing:.06em;
+  text-transform:uppercase;
+  box-shadow:0 0 14px rgba(59,130,246,.55);
+  opacity:.94;
+  pointer-events:none;
+}
+.neon-home .card:has(video) .thumb::before { content:"VIDEO · MAX"; background:linear-gradient(90deg,#06b6d4,#2563eb); }
+.neon-home .card:not(:has(video)) .thumb::before { content:"IMAGE · AI"; }
+.neon-home .card:has(video) .thumb::after {
+  box-shadow: inset 0 0 40px rgba(37,99,235,.16);
+}
+.neon-home .card:has(video) video { background:#020617; }
+
+/* Right-side reference feature rail. */
+.neon-feature-rail {
+  position:absolute;
+  top:150px;
+  right:-205px;
+  width:185px;
+  display:grid;
+  gap:18px;
+  pointer-events:none;
+}
+.neon-feature {
+  padding:12px 13px;
+  border-left:2px solid rgba(96,165,250,.55);
+  background:linear-gradient(90deg,rgba(7,16,37,.76),rgba(7,16,37,.18));
+  border-radius:0 14px 14px 0;
+  box-shadow:0 0 24px rgba(37,99,235,.08);
+  animation: neonRailFloat 5s ease-in-out infinite alternate;
+}
+.neon-feature:nth-child(2){animation-delay:.5s}.neon-feature:nth-child(3){animation-delay:1s}.neon-feature:nth-child(4){animation-delay:1.5s}
+@keyframes neonRailFloat { from{transform:translateY(0);opacity:.84} to{transform:translateY(-6px);opacity:1} }
+.neon-feature-icon {
+  width:30px;height:30px;border-radius:10px;display:grid;place-items:center;
+  color:#fff;font-weight:900;background:linear-gradient(135deg,#2563eb,#a855f7);
+  box-shadow:0 0 20px rgba(99,102,241,.45); margin-bottom:8px;
+}
+.neon-feature h3 { margin:0 0 6px; font-size:13px; color:#f5f3ff; }
+.neon-feature ul { margin:0; padding-left:15px; color:#93a9cf; font-size:10px; line-height:1.6; }
+
+@media (max-width: 1450px) {
+  .neon-feature-rail { display:none; }
+}
+@media (max-width: 980px) {
+  .neon-home .grid { grid-template-columns:repeat(2,minmax(0,1fr)); }
+}
+@media (max-width: 620px) {
+  .neon-home .hero { height:58px; min-height:58px; }
+  .neon-home .grid { grid-template-columns:repeat(2,minmax(0,1fr)); gap:10px; }
+  .neon-home .card { border-radius:14px; }
+  .neon-home .body { padding:10px 10px 12px; }
+  .neon-home .body h3 { font-size:13px; }
+  .neon-home .excerpt { font-size:10.5px; line-height:1.42; display:-webkit-box; -webkit-line-clamp:3; -webkit-box-orient:vertical; overflow:hidden; }
+  .neon-home .meta { font-size:8px; }
+  .neon-home .tag { font-size:8px; }
+  .neon-home .thumb::before { top:6px; left:6px; padding:4px 6px; font-size:7px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .neon-home::before,.neon-feature,.neon-home .card::before { animation:none !important; }
+  .neon-home .card,.neon-home .thumb img { transition:none !important; }
+}
