@@ -242,7 +242,7 @@ const card = (p) => {
 
   return `
 <article
-  class="card"
+  class="card media-${esc(String(p.media || "Image").toLowerCase())}"
   data-slug="${esc(p.slug)}"
   tabindex="0"
   role="button"
@@ -401,6 +401,8 @@ async function load() {
 
     grid.innerHTML =
       output.join("");
+
+    initCardMotion();
   } catch (error) {
     console.error(
       "Prompt loading failed:",
@@ -977,6 +979,83 @@ if (search) {
   );
 }
 
+
+/* =========================================================
+   PREMIUM CARD MOTION
+========================================================= */
+
+let cardMotionObserver = null;
+
+function initCardMotion() {
+  const cards = grid?.querySelectorAll(".card");
+  if (!cards?.length) return;
+
+  cards.forEach((item, index) => {
+    item.style.setProperty("--card-delay", `${Math.min(index * 45, 420)}ms`);
+  });
+
+  if ("IntersectionObserver" in window) {
+    cardMotionObserver?.disconnect();
+
+    cardMotionObserver = new IntersectionObserver(
+      (entries, observer) => {
+        entries.forEach((entry) => {
+          if (!entry.isIntersecting) return;
+
+          entry.target.classList.add("motion-in");
+          observer.unobserve(entry.target);
+        });
+      },
+      {
+        threshold: 0.08,
+        rootMargin: "0px 0px -30px 0px"
+      }
+    );
+
+    cards.forEach((item) => cardMotionObserver.observe(item));
+  } else {
+    cards.forEach((item) => item.classList.add("motion-in"));
+  }
+
+  // Desktop pointer tilt. Disabled for touch devices.
+  if (window.matchMedia("(hover: hover) and (pointer: fine)").matches) {
+    cards.forEach((item) => {
+      if (item.dataset.tiltReady === "1") return;
+      item.dataset.tiltReady = "1";
+
+      item.addEventListener("pointermove", (event) => {
+        if (item.classList.contains("is-pressed")) return;
+
+        const rect = item.getBoundingClientRect();
+        const x = (event.clientX - rect.left) / rect.width;
+        const y = (event.clientY - rect.top) / rect.height;
+
+        const rotateY = (x - 0.5) * 5;
+        const rotateX = (0.5 - y) * 5;
+
+        item.style.setProperty("--rx", `${rotateX}deg`);
+        item.style.setProperty("--ry", `${rotateY}deg`);
+      });
+
+      item.addEventListener("pointerleave", () => {
+        item.style.setProperty("--rx", "0deg");
+        item.style.setProperty("--ry", "0deg");
+      });
+
+      item.addEventListener("pointerdown", () => {
+        item.classList.add("is-pressed");
+      });
+
+      item.addEventListener("pointerup", () => {
+        item.classList.remove("is-pressed");
+      });
+
+      item.addEventListener("pointercancel", () => {
+        item.classList.remove("is-pressed");
+      });
+    });
+  }
+}
 
 /* =========================================================
    CARD CLICK
