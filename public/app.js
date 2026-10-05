@@ -242,7 +242,7 @@ const card = (p) => {
 
   return `
 <article
-  class="card media-${esc(String(p.media || "Image").toLowerCase())}"
+  class="card"
   data-slug="${esc(p.slug)}"
   tabindex="0"
   role="button"
@@ -401,8 +401,6 @@ async function load() {
 
     grid.innerHTML =
       output.join("");
-
-    initCardMotion();
   } catch (error) {
     console.error(
       "Prompt loading failed:",
@@ -981,83 +979,6 @@ if (search) {
 
 
 /* =========================================================
-   PREMIUM CARD MOTION
-========================================================= */
-
-let cardMotionObserver = null;
-
-function initCardMotion() {
-  const cards = grid?.querySelectorAll(".card");
-  if (!cards?.length) return;
-
-  cards.forEach((item, index) => {
-    item.style.setProperty("--card-delay", `${Math.min(index * 45, 420)}ms`);
-  });
-
-  if ("IntersectionObserver" in window) {
-    cardMotionObserver?.disconnect();
-
-    cardMotionObserver = new IntersectionObserver(
-      (entries, observer) => {
-        entries.forEach((entry) => {
-          if (!entry.isIntersecting) return;
-
-          entry.target.classList.add("motion-in");
-          observer.unobserve(entry.target);
-        });
-      },
-      {
-        threshold: 0.08,
-        rootMargin: "0px 0px -30px 0px"
-      }
-    );
-
-    cards.forEach((item) => cardMotionObserver.observe(item));
-  } else {
-    cards.forEach((item) => item.classList.add("motion-in"));
-  }
-
-  // Desktop pointer tilt. Disabled for touch devices.
-  if (window.matchMedia("(hover: hover) and (pointer: fine)").matches) {
-    cards.forEach((item) => {
-      if (item.dataset.tiltReady === "1") return;
-      item.dataset.tiltReady = "1";
-
-      item.addEventListener("pointermove", (event) => {
-        if (item.classList.contains("is-pressed")) return;
-
-        const rect = item.getBoundingClientRect();
-        const x = (event.clientX - rect.left) / rect.width;
-        const y = (event.clientY - rect.top) / rect.height;
-
-        const rotateY = (x - 0.5) * 5;
-        const rotateX = (0.5 - y) * 5;
-
-        item.style.setProperty("--rx", `${rotateX}deg`);
-        item.style.setProperty("--ry", `${rotateY}deg`);
-      });
-
-      item.addEventListener("pointerleave", () => {
-        item.style.setProperty("--rx", "0deg");
-        item.style.setProperty("--ry", "0deg");
-      });
-
-      item.addEventListener("pointerdown", () => {
-        item.classList.add("is-pressed");
-      });
-
-      item.addEventListener("pointerup", () => {
-        item.classList.remove("is-pressed");
-      });
-
-      item.addEventListener("pointercancel", () => {
-        item.classList.remove("is-pressed");
-      });
-    });
-  }
-}
-
-/* =========================================================
    CARD CLICK
 ========================================================= */
 
@@ -1324,3 +1245,51 @@ if ("serviceWorker" in navigator) {
   });
 }
 
+
+/* =========================================================
+   PREMIUM MOTION — HOMEPAGE CARD REVEAL + POINTER TILT
+   ========================================================= */
+(function promptForgeMotion(){
+  const installMotion = () => {
+    const cards = Array.from(document.querySelectorAll('.card'));
+    if (!cards.length) return;
+
+    if ('IntersectionObserver' in window) {
+      const io = new IntersectionObserver((entries) => {
+        entries.forEach((entry) => {
+          if (entry.isIntersecting) {
+            const index = cards.indexOf(entry.target);
+            entry.target.style.transitionDelay = `${Math.min(index % 6, 5) * 55}ms`;
+            entry.target.classList.add('pf-visible');
+            io.unobserve(entry.target);
+          }
+        });
+      }, { threshold: 0.08, rootMargin: '0px 0px -35px 0px' });
+      cards.forEach(card => io.observe(card));
+    } else {
+      cards.forEach(card => card.classList.add('pf-visible'));
+    }
+
+    // Desktop pointer tilt; disabled on touch devices.
+    if (window.matchMedia('(hover: hover) and (pointer: fine)').matches) {
+      cards.forEach(card => {
+        card.addEventListener('pointermove', (event) => {
+          const r = card.getBoundingClientRect();
+          const x = (event.clientX - r.left) / r.width - 0.5;
+          const y = (event.clientY - r.top) / r.height - 0.5;
+          card.style.transform = `translateY(-9px) scale(1.012) rotateX(${(-y * 2.2).toFixed(2)}deg) rotateY(${(x * 2.2).toFixed(2)}deg)`;
+        });
+        card.addEventListener('pointerleave', () => {
+          card.style.transform = '';
+        });
+      });
+    }
+  };
+
+  const observer = new MutationObserver(() => {
+    if (document.querySelector('.card')) installMotion();
+  });
+  observer.observe(document.body, { childList: true, subtree: true });
+  window.addEventListener('load', installMotion, { once: true });
+  setTimeout(installMotion, 700);
+})();
