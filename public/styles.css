@@ -1842,3 +1842,362 @@ img {
   color:#9f9bad;
   font-size:13px;
 }
+
+
+/* =========================================================
+   PROMPTFORGE PREMIUM MOTION UPGRADE
+   Keeps existing content/functionality; upgrades presentation.
+========================================================= */
+
+:root {
+  --motion-ease: cubic-bezier(.22, 1, .36, 1);
+  --motion-purple: rgba(139, 92, 246, .78);
+  --motion-blue: rgba(59, 130, 246, .62);
+}
+
+/* Ambient page depth */
+body {
+  position: relative;
+  isolation: isolate;
+  background:
+    radial-gradient(circle at 8% 0%, rgba(99, 52, 220, .12), transparent 28%),
+    radial-gradient(circle at 92% 18%, rgba(37, 99, 235, .09), transparent 25%),
+    var(--bg, #080b12);
+}
+
+body::before,
+body::after {
+  content: "";
+  position: fixed;
+  z-index: -1;
+  pointer-events: none;
+  width: 42vw;
+  height: 42vw;
+  max-width: 560px;
+  max-height: 560px;
+  border-radius: 50%;
+  filter: blur(90px);
+  opacity: .16;
+  animation: pfAmbient 12s ease-in-out infinite alternate;
+}
+
+body::before {
+  top: -22vw;
+  left: -18vw;
+  background: #7c3aed;
+}
+
+body::after {
+  right: -20vw;
+  bottom: -24vw;
+  background: #2563eb;
+  animation-delay: -6s;
+}
+
+@keyframes pfAmbient {
+  from { transform: translate3d(0, 0, 0) scale(.9); }
+  to { transform: translate3d(7vw, 5vw, 0) scale(1.12); }
+}
+
+/* Header depth */
+.site-header {
+  backdrop-filter: blur(18px) saturate(135%);
+  -webkit-backdrop-filter: blur(18px) saturate(135%);
+  box-shadow: 0 1px 0 rgba(255,255,255,.045), 0 12px 45px rgba(0,0,0,.12);
+}
+
+.brand-mark {
+  transition: transform .45s var(--motion-ease), box-shadow .45s var(--motion-ease);
+}
+
+.brand:hover .brand-mark {
+  transform: rotate(-8deg) scale(1.08);
+  box-shadow: 0 0 28px rgba(139,92,246,.45);
+}
+
+.header-search input {
+  transition: border-color .3s ease, box-shadow .3s ease, transform .3s var(--motion-ease);
+}
+
+.header-search input:focus {
+  transform: translateY(-1px);
+  border-color: rgba(139,92,246,.65);
+  box-shadow: 0 0 0 4px rgba(139,92,246,.09), 0 10px 35px rgba(0,0,0,.18);
+}
+
+/* Filter/category motion */
+.pill,
+.categories button,
+.primary-btn,
+.secondary-btn {
+  transition:
+    transform .28s var(--motion-ease),
+    border-color .28s ease,
+    background .28s ease,
+    box-shadow .28s ease;
+}
+
+.pill:hover,
+.categories button:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 8px 24px rgba(0,0,0,.18);
+}
+
+.pill.active,
+.categories button.on {
+  box-shadow: 0 0 24px rgba(139,92,246,.12);
+}
+
+/* Premium three-column gallery */
+.grid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 20px;
+  perspective: 1200px;
+}
+
+/* Card entrance + 3D hover */
+.card {
+  position: relative;
+  opacity: 0;
+  transform:
+    translateY(24px)
+    rotateX(var(--rx, 0deg))
+    rotateY(var(--ry, 0deg));
+  transform-origin: center center;
+  will-change: transform, opacity;
+  transition:
+    transform .55s var(--motion-ease),
+    opacity .55s var(--motion-ease),
+    border-color .35s ease,
+    box-shadow .35s ease;
+  transition-delay: var(--card-delay, 0ms);
+  background:
+    linear-gradient(145deg, rgba(255,255,255,.065), rgba(255,255,255,.018) 55%, rgba(139,92,246,.035));
+}
+
+.card.motion-in {
+  opacity: 1;
+  transform:
+    translateY(0)
+    rotateX(var(--rx, 0deg))
+    rotateY(var(--ry, 0deg));
+}
+
+.card::before {
+  content: "";
+  position: absolute;
+  inset: -1px;
+  z-index: 2;
+  pointer-events: none;
+  border-radius: inherit;
+  padding: 1px;
+  background: linear-gradient(
+    120deg,
+    transparent 10%,
+    rgba(139,92,246,.0) 35%,
+    rgba(96,165,250,.58) 50%,
+    rgba(139,92,246,.0) 65%,
+    transparent 90%
+  );
+  background-size: 220% 100%;
+  opacity: 0;
+  -webkit-mask:
+    linear-gradient(#000 0 0) content-box,
+    linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+  transition: opacity .35s ease;
+}
+
+.card::after {
+  content: "";
+  position: absolute;
+  left: 10%;
+  right: 10%;
+  bottom: -16px;
+  height: 34px;
+  z-index: -1;
+  pointer-events: none;
+  background: rgba(124,58,237,.28);
+  filter: blur(24px);
+  opacity: 0;
+  transition: opacity .35s ease, transform .35s var(--motion-ease);
+}
+
+.card:hover {
+  transform:
+    translateY(-9px)
+    rotateX(var(--rx, 0deg))
+    rotateY(var(--ry, 0deg))
+    scale(1.012);
+  border-color: rgba(139,92,246,.62);
+  box-shadow:
+    0 25px 70px rgba(0,0,0,.36),
+    0 0 32px rgba(99,102,241,.12);
+}
+
+.card:hover::before {
+  opacity: 1;
+  animation: pfBorderSweep 2.1s linear infinite;
+}
+
+.card:hover::after {
+  opacity: .8;
+  transform: scale(1.05);
+}
+
+.card.is-pressed {
+  transform: translateY(-2px) scale(.985);
+}
+
+@keyframes pfBorderSweep {
+  to { background-position: -220% 0; }
+}
+
+/* Image motion */
+.thumb {
+  isolation: isolate;
+}
+
+.thumb::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  pointer-events: none;
+  background:
+    linear-gradient(
+      115deg,
+      transparent 18%,
+      rgba(255,255,255,.11) 45%,
+      transparent 68%
+    );
+  background-size: 220% 100%;
+  transform: translateX(-100%);
+  transition: transform .8s var(--motion-ease);
+}
+
+.card:hover .thumb::after {
+  transform: translateX(100%);
+}
+
+.thumb img,
+.thumb video {
+  transition:
+    transform .8s var(--motion-ease),
+    filter .5s ease;
+}
+
+.card:hover .thumb img,
+.card:hover .thumb video {
+  transform: scale(1.07);
+  filter: saturate(1.08) contrast(1.03);
+}
+
+/* Video gets a subtle breathing effect */
+.card.media-video .thumb::before {
+  content: "▶";
+  position: absolute;
+  z-index: 3;
+  left: 50%;
+  top: 50%;
+  width: 54px;
+  height: 54px;
+  transform: translate(-50%, -50%) scale(.92);
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  color: #fff;
+  font-size: 18px;
+  padding-left: 3px;
+  background: rgba(8,11,18,.48);
+  border: 1px solid rgba(255,255,255,.34);
+  box-shadow: 0 0 0 0 rgba(96,165,250,.35);
+  opacity: .9;
+  pointer-events: none;
+  transition: transform .35s var(--motion-ease), background .35s ease;
+}
+
+.card.media-video:hover .thumb::before {
+  transform: translate(-50%, -50%) scale(1);
+  background: rgba(59,130,246,.62);
+  animation: pfPlayPulse 1.8s ease-in-out infinite;
+}
+
+@keyframes pfPlayPulse {
+  50% {
+    box-shadow: 0 0 0 13px rgba(96,165,250,0);
+  }
+}
+
+/* Text reveal polish */
+.card .body {
+  position: relative;
+  z-index: 3;
+}
+
+.card .meta,
+.card h3,
+.card .excerpt,
+.card .tag {
+  transition: transform .35s var(--motion-ease), opacity .35s ease;
+}
+
+.card:hover h3 {
+  transform: translateX(2px);
+}
+
+.card:hover .tag {
+  transform: translateY(-2px);
+  box-shadow: 0 5px 18px rgba(139,92,246,.18);
+}
+
+/* Loading / empty state */
+.grid > .muted {
+  animation: pfSoftPulse 1.5s ease-in-out infinite;
+}
+
+@keyframes pfSoftPulse {
+  50% { opacity: .52; }
+}
+
+/* Accessibility: honor reduced motion */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: .01ms !important;
+    animation-iteration-count: 1 !important;
+    scroll-behavior: auto !important;
+    transition-duration: .01ms !important;
+  }
+
+  .card {
+    opacity: 1;
+    transform: none !important;
+  }
+}
+
+@media (max-width: 1100px) {
+  .grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 680px) {
+  .grid {
+    grid-template-columns: 1fr;
+    gap: 15px;
+  }
+
+  .card:hover {
+    transform: translateY(-5px) scale(1.005);
+  }
+
+  body::before,
+  body::after {
+    width: 70vw;
+    height: 70vw;
+    filter: blur(70px);
+  }
+}
