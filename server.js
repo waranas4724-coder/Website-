@@ -3327,6 +3327,18 @@ app.get(
     )
 );
 
+app.get(
+  '/privacy',
+  (req, res) =>
+    res.sendFile(
+      path.join(
+        __dirname,
+        'public',
+        'privacy.html'
+      )
+    )
+);
+
 app.use(
   '/api',
   (req, res) =>
